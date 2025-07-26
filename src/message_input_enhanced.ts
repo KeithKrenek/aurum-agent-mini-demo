@@ -177,9 +177,9 @@ const MessageInput: React.FC<MessageInputProps> = ({
                     <span className="text-sm font-medium text-dark-gray">
                       Demo Answer Available
                     </span>
-                    {/* <span className="text-xs bg-goldenrod text-white px-2 py-0.5 rounded-full">
+                    <span className="text-xs bg-goldenrod text-white px-2 py-0.5 rounded-full">
                       Try It!
-                    </span> */}
+                    </span>
                   </div>
                   
                   <motion.button
@@ -259,7 +259,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
           </motion.div>
           
           {/* Enhanced Status Messages */}
-          {/* <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait">
             {inputError && (
               <motion.p 
                 key="error"
@@ -307,7 +307,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
                 💡 New to brand development? Try the demo answer for realistic results!
               </motion.p>
             )}
-          </AnimatePresence> */}
+          </AnimatePresence>
         </div>
       </div>
     </footer>

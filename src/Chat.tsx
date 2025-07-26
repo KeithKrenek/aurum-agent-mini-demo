@@ -912,13 +912,13 @@ Ready to take your brand to the next level? The insights you've discovered here 
     let userContent = input.trim();
     
     // NEW: Check for substantiveness *before* sending the message.
-    const isResponseSubstantive = isSubstantive(userContent, questionCount);
+    // const isResponseSubstantive = isSubstantive(userContent, questionCount);
 
-    if (!isResponseSubstantive) {
-        // If the answer is brief, give the user feedback and prepend a note for the assistant.
-        toast('Your answer seems a bit brief. Asking the assistant for a follow-up.', { icon: '✍️', duration: 4000 });
-        userContent = `[System Note: My previous answer was brief. Please ask me a clarifying follow-up question to help me provide more detail before we move on.]\n\nMy answer was: "${userContent}"`;
-    }
+    // if (!isResponseSubstantive) {
+    //     // If the answer is brief, give the user feedback and prepend a note for the assistant.
+    //     toast('Your answer seems a bit brief. Asking the assistant for a follow-up.', { icon: '✍️', duration: 4000 });
+    //     userContent = `[System Note: My previous answer was brief. Please ask me a clarifying follow-up question to help me provide more detail before we move on.]\n\nMy answer was: "${userContent}"`;
+    // }
 
     const userMessage: Message = {
       role: 'user',
