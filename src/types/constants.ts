@@ -146,33 +146,31 @@ export const QUESTION_KEYWORDS = {
   ]
 } as const;
 
-// Enhanced question signature matching for more robust detection
+// REFINED: Signatures are now longer and more unique to prevent false positive matches.
 export const QUESTION_SIGNATURES = {
   discovery: [
-    // Question 1 signatures
-    ['customers ask why they should choose', 'choose your business over competitors', 'positive difference'],
-    // Question 2 signatures
-    ['three principles or beliefs guide', 'how you run your business', 'demonstrate this in your day-to-day'],
-    // Question 3 signatures
-    ['business were a person walking', 'networking event', 'describe their personality']
+    ['choose your business over competitors', 'positive difference do you want to make'],
+    ['three principles or beliefs guide how you run your business', 'demonstrate this in your day-to-day'],
+    ['business were a person walking into a networking event', 'describe their personality']
   ],
   messaging: [
-    // Question 1 signatures
-    ['explain what makes your business special', 'one short sentence', 'capture both what you do'],
-    // Question 2 signatures
-    ['casual and friendly, or more professional', 'write a few lines about your business', 'in this style'],
-    // Question 3 signatures
-    ['website, social media, and any marketing', 'telling the same story everywhere', 'message differs']
+    ['explain what makes your business special in one short sentence', 'why customers should care'],
+    ['casual and friendly, or more professional and formal', 'write a few lines about your business'],
+    ['telling the same story everywhere', 'note any places where your message differs']
   ],
   audience: [
-    // Question 1 signatures
-    ['favorite customer – the type you wish', 'great fit for your business', 'one thing that makes them'],
-    // Question 2 signatures
-    ['three biggest problems or challenges', 'before they find your business', 'motivates them to seek help'],
-    // Question 3 signatures
-    ['recent social media posts or emails', 'directly address the problems', 'more relevant to your ideal customers']
+    ['think about your favorite customer', 'makes them such a great fit'],
+    ['three biggest problems or challenges that your best customers typically face', 'motivates them to seek help'],
+    ['recent social media posts or emails to customers', 'address the problems you just identified']
   ]
 } as const;
+
+// NEW: A flattened array of the refined signatures for easier iteration in the new `calculateQuestionProgress`.
+export const QUESTION_SIGNATURES_FLAT = [
+    ...QUESTION_SIGNATURES.discovery,
+    ...QUESTION_SIGNATURES.messaging,
+    ...QUESTION_SIGNATURES.audience
+];
 
 // Validation helpers with enhanced error handling
 export const isValidPhaseId = (phase: string): phase is keyof typeof PHASE_CONFIG => {
@@ -188,128 +186,46 @@ export const getMockAnswersByPhase = (phase: keyof typeof MOCK_ANSWERS) => {
 };
 
 // COMPLETELY REWRITTEN: Super robust demo answer matching with multiple fallback strategies
+// SIMPLIFIED & REFINED: The logic for finding a demo answer is now more direct because it
+// can trust the `questionIndex` it receives.
 export const getDemoAnswerForQuestion = (
   assistantContent: string,
-  currentPhase: keyof typeof QUESTION_KEYWORDS | 'complete',
+  currentPhase: keyof typeof MOCK_ANSWERS | 'complete',
   questionIndex: number
 ): string | null => {
   console.log(`getDemoAnswerForQuestion called with phase: ${currentPhase}, questionIndex: ${questionIndex}`);
-  
-  // Early return for complete phase
-  if (currentPhase === 'complete') {
-    console.log('Complete phase, no demo answers');
-    return null;
-  }
-  
-  if (!QUESTION_KEYWORDS[currentPhase] || !MOCK_ANSWERS[currentPhase]) {
-    console.log('Invalid phase or no keywords/answers available');
+
+  if (currentPhase === 'complete' || questionIndex >= PREDEFINED_QUESTIONS.length) {
     return null;
   }
 
-  const phaseKeywords = QUESTION_KEYWORDS[currentPhase];
-  const phaseSignatures = QUESTION_SIGNATURES[currentPhase];
-  const phaseAnswers = MOCK_ANSWERS[currentPhase];
-  
-  // Boundary checks
-  if (questionIndex >= PREDEFINED_QUESTIONS.length || questionIndex < 0) {
-    console.log(`Question index ${questionIndex} is out of bounds`);
+  const phaseStartIndices = { discovery: 0, messaging: 3, audience: 6 };
+  if (!(currentPhase in phaseStartIndices)) {
     return null;
   }
-  
-  // Determine which question in the current phase we should be on
-  const phaseStartIndices = { discovery: 0, messaging: 3, audience: 6 };
+
   const phaseStartIndex = phaseStartIndices[currentPhase];
   const questionInPhase = questionIndex - phaseStartIndex;
-  
-  console.log(`Phase start index: ${phaseStartIndex}, question in phase: ${questionInPhase}`);
-  
-  if (questionInPhase < 0 || questionInPhase >= phaseKeywords.length) {
-    console.log(`Question in phase ${questionInPhase} is out of range for ${currentPhase} phase`);
+
+  const phaseAnswers = MOCK_ANSWERS[currentPhase];
+
+  if (questionInPhase < 0 || questionInPhase >= phaseAnswers.length) {
     return null;
   }
 
+  // Use the refined, more reliable signatures for matching.
+  const expectedSignatures = QUESTION_SIGNATURES[currentPhase][questionInPhase];
   const contentLower = assistantContent.toLowerCase();
-  
-  // Strategy 1: Direct question signature matching (most reliable)
-  const expectedSignatures = phaseSignatures[questionInPhase];
+
   for (const signature of expectedSignatures) {
     if (contentLower.includes(signature.toLowerCase())) {
-      console.log(`Direct signature match for question ${questionInPhase}: "${signature}"`);
+      console.log(`Direct signature match for question ${questionIndex}, providing demo answer.`);
       return phaseAnswers[questionInPhase];
     }
   }
-  
-  // Strategy 2: Full question text matching
-  const expectedQuestionIndex = phaseStartIndex + questionInPhase;
-  if (expectedQuestionIndex < PREDEFINED_QUESTIONS.length) {
-    const expectedQuestion = PREDEFINED_QUESTIONS[expectedQuestionIndex];
-    
-    // Check multiple substrings of the question
-    const questionParts = [
-      expectedQuestion.substring(0, 50),
-      expectedQuestion.substring(0, 30),
-      expectedQuestion.split('?')[0] + '?'
-    ];
-    
-    for (const part of questionParts) {
-      if (contentLower.includes(part.toLowerCase())) {
-        console.log(`Direct question part match for question ${questionInPhase}: "${part}"`);
-        return phaseAnswers[questionInPhase];
-      }
-    }
-    
-    // Word similarity check
-    const questionWords = expectedQuestion.toLowerCase().split(' ').filter(w => w.length > 3);
-    const matchingWords = questionWords.filter(word => contentLower.includes(word));
-    const similarity = matchingWords.length / questionWords.length;
-    
-    if (similarity >= 0.35) { // Slightly lower threshold for better matching
-      console.log(`Question similarity match for question ${questionInPhase}: ${Math.round(similarity * 100)}%`);
-      return phaseAnswers[questionInPhase];
-    }
-  }
-  
-  // Strategy 3: Keyword density matching for current question
-  const expectedKeywords = phaseKeywords[questionInPhase];
-  const keywordMatches = expectedKeywords.filter(keyword =>
-    contentLower.includes(keyword.toLowerCase())
-  );
-  
-  const keywordScore = keywordMatches.length / expectedKeywords.length;
-  if (keywordScore >= 0.3) { // Lower threshold than before
-    console.log(`Keyword matched question ${questionInPhase} with ${keywordMatches.length}/${expectedKeywords.length} keywords (${Math.round(keywordScore * 100)}%)`);
-    return phaseAnswers[questionInPhase];
-  }
-  
-  // Strategy 4: Fallback keyword matching across all questions in phase
-  let bestMatch = -1;
-  let bestScore = 0;
-  
-  for (let i = 0; i < phaseKeywords.length; i++) {
-    const keywords = phaseKeywords[i];
-    const matches = keywords.filter(keyword =>
-      contentLower.includes(keyword.toLowerCase())
-    ).length;
-    
-    const score = matches / keywords.length;
-    if (score > bestScore && matches >= 2) { // Require at least 2 matches
-      bestScore = score;
-      bestMatch = i;
-    }
-  }
-  
-  if (bestMatch >= 0) {
-    console.log(`Fallback matched question ${bestMatch} with score ${Math.round(bestScore * 100)}% (expected: ${questionInPhase})`);
-    return phaseAnswers[bestMatch];
-  }
-  
-  // Strategy 5: Phase-based fallback for new phases
-  if (questionInPhase === 0) {
-    console.log(`New phase start for ${currentPhase}, returning first answer`);
-    return phaseAnswers[0];
-  }
-  
-  console.log(`No demo answer match found for phase: ${currentPhase}, questionInPhase: ${questionInPhase}, questionIndex: ${questionIndex}`);
+
+  // If no strong match is found, it's better to show nothing than the wrong thing.
+  console.warn(`Could not find a direct signature match for question index ${questionIndex}. No demo answer will be provided.`);
   return null;
 };
 

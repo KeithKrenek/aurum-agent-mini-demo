@@ -12,7 +12,7 @@ import MessageInput from './MessageInput';
 import MessageBubble from './MessageBubble';
 import PhaseProgress from './PhaseProgress';
 import { config } from './config/environment';
-import { PREDEFINED_QUESTIONS, MOCK_ANSWERS, getDemoAnswerForQuestion } from './types/constants';
+import { PREDEFINED_QUESTIONS, MOCK_ANSWERS, QUESTION_SIGNATURES_FLAT, getDemoAnswerForQuestion } from './types/constants';
 import { ProcessingStage, processingMessages } from './types/constants';
 import { generatePDF } from './pdfGenerator';
 
@@ -24,12 +24,37 @@ class ChatError extends Error {
   }
 }
 
+// NEW: A more flexible and robust check for whether an answer is substantive.
+const isSubstantive = (content: string, questionIndex: number): boolean => {
+  const trimmed = content.trim();
+  // An answer is not substantive if it's very short.
+  if (trimmed.length < 20) return false;
+
+  // Check if the answer is an exact match for any of the mock answers.
+  const allMockAnswers = [
+    ...MOCK_ANSWERS.discovery,
+    ...MOCK_ANSWERS.messaging,
+    ...MOCK_ANSWERS.audience
+  ];
+
+  // If the user's answer exactly matches a known mock answer...
+  if (allMockAnswers.includes(trimmed as typeof allMockAnswers[number])) {
+    // ...it's only considered substantive if it matches the mock answer for the *current* question.
+    // This allows the user to use the suggestion, but prevents them from copy-pasting answers for other questions.
+    return trimmed === allMockAnswers[questionIndex];
+  }
+
+  // If it's long enough and not a mismatched mock answer, it's substantive.
+  return true;
+};
+
+
 const Chat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  const [currentPhase, setCurrentPhase] = useState<'discovery' | 'messaging' | 'audience' | 'complete'>('discovery');
+  const [currentPhase, setCurrentPhase] = useState<PhaseId>('discovery');
   const [questionCount, setQuestionCount] = useState(0);
   const [reports, setReports] = useState<Interview['reports']>({});
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -38,7 +63,7 @@ const Chat: React.FC = () => {
   const [lastProcessedMessageCount, setLastProcessedMessageCount] = useState(0);
   const [retryCount, setRetryCount] = useState(0);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
-  const [actualQuestionIndex, setActualQuestionIndex] = useState(0); // NEW: Track actual question position
+  const [actualQuestionIndex, setActualQuestionIndex] = useState(0);
   const messageListRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const progressManager = useRef<ProgressManager | null>(null);
@@ -47,130 +72,84 @@ const Chat: React.FC = () => {
   const inputBoxRef = useRef<HTMLDivElement>(null);
 
   const interviewId = urlInterviewId || sessionStorage.getItem('interviewId');
- 
+
   const openai = new OpenAI({
     apiKey: config.openai.apiKey,
     dangerouslyAllowBrowser: true
   });
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    if (!messageListRef.current) return;
-    
-    const scrollContainer = messageListRef.current;
-    const scrollHeight = scrollContainer.scrollHeight;
-    const clientHeight = scrollContainer.clientHeight;
-    const maxScroll = scrollHeight - clientHeight;
-    
-    if (scrollContainer.scrollTop < maxScroll) {
-      try {
-        scrollContainer.scrollTo({
-          top: scrollHeight,
-          behavior,
-        });
-      } catch (error) {
-        scrollContainer.scrollTop = scrollHeight;
-      }
+    if (messageListRef.current) {
+      messageListRef.current.scrollTo({
+        top: messageListRef.current.scrollHeight,
+        behavior,
+      });
     }
   }, []);
 
-  // FIXED: More robust question counting with actual question tracking
+  // REWRITTEN: A single-pass, more accurate progress calculation function.
   const calculateQuestionProgress = useCallback((messageHistory: Message[]): { answeredCount: number; nextQuestionIndex: number } => {
-    let answeredQuestions = 0;
-    let lastQuestionIndex = -1;
-    
-    // First pass: Find which questions have been asked
-    for (let i = 0; i < messageHistory.length; i++) {
-      const message = messageHistory[i];
-      
-      if (message.role === 'assistant') {
-        const messageContent = typeof message.content === 'string' ? message.content : '';
-        
-        // Check for each predefined question in order
-        for (let qIndex = lastQuestionIndex + 1; qIndex < PREDEFINED_QUESTIONS.length; qIndex++) {
-          const question = PREDEFINED_QUESTIONS[qIndex];
-          
-          // Multiple matching strategies for robustness
-          const strategies = [
-            // Strategy 1: Look for quoted question
-            () => messageContent.includes(`"${question.substring(0, 50)}`),
-            // Strategy 2: Look for bold question  
-            () => messageContent.includes(`**"${question.substring(0, 50)}`),
-            // Strategy 3: Keyword density check
-            () => {
-              const questionWords = question.toLowerCase().split(' ').filter(w => w.length > 3);
-              const contentWords = messageContent.toLowerCase();
-              const matches = questionWords.filter(word => contentWords.includes(word));
-              return matches.length >= Math.min(3, questionWords.length * 0.4);
-            },
-            // Strategy 4: Direct substring match
-            () => messageContent.toLowerCase().includes(question.substring(0, 40).toLowerCase())
-          ];
-          
-          const found = strategies.some(strategy => strategy());
-          
-          if (found) {
-            lastQuestionIndex = qIndex;
-            console.log(`Found question ${qIndex}: "${question.substring(0, 50)}..."`);
-            break;
-          }
-        }
-      }
-    }
-    
-    // Second pass: Count user responses to questions
+    let answeredCount = 0;
+    const answeredQuestionIndices = new Set<number>();
+
+    // This single loop accurately ties user answers to the questions that precede them.
     for (let i = 0; i < messageHistory.length - 1; i++) {
-      const currentMessage = messageHistory[i];
-      const nextMessage = messageHistory[i + 1];
-      
-      if (currentMessage.role === 'assistant' && nextMessage.role === 'user') {
-        const userContent = typeof nextMessage.content === 'string' ? nextMessage.content : '';
-        
-        // Must be substantive (not just demo answer repetition)
-        const isSubstantive = userContent.trim().length > 30 && 
-                             !userContent.startsWith('Problem 1: Fear of AI') &&
-                             !userContent.includes('Problem 1: Fear of AI unpredictability');
-        
-        if (isSubstantive) {
-          answeredQuestions++;
+        const currentMessage = messageHistory[i];
+        if (currentMessage.role !== 'assistant') continue;
+
+        const messageContent = currentMessage.content.toLowerCase();
+        let questionIndexFound = -1;
+
+        // Find which predefined question is in this assistant message.
+        for (let qIndex = 0; qIndex < PREDEFINED_QUESTIONS.length; qIndex++) {
+            // Skip questions that we've already confirmed are answered.
+            if (answeredQuestionIndices.has(qIndex)) continue;
+
+            // Use the more reliable, longer signatures for matching.
+            const questionSignatures = QUESTION_SIGNATURES_FLAT[qIndex];
+            for (const signature of questionSignatures) {
+                if (messageContent.includes(signature.toLowerCase())) {
+                    questionIndexFound = qIndex;
+                    break;
+                }
+            }
+
+            if (questionIndexFound !== -1) {
+                // A question was found. Check if the immediately following message is a substantive answer from the user.
+                const nextMessage = messageHistory[i + 1];
+                if (nextMessage && nextMessage.role === 'user' && isSubstantive(nextMessage.content, questionIndexFound)) {
+                    answeredCount++;
+                    answeredQuestionIndices.add(questionIndexFound);
+                }
+                break; // Stop searching for questions in this message.
+            }
         }
-      }
     }
-    
-    // The next question index should be the number of answered questions
-    const nextQuestionIndex = Math.min(answeredQuestions, PREDEFINED_QUESTIONS.length - 1);
-    
-    console.log(`Question tracking: lastFound=${lastQuestionIndex + 1}, answered=${answeredQuestions}, nextIndex=${nextQuestionIndex}`);
-    
+
+    const nextQuestionIndex = answeredCount;
+    console.log(`Question tracking REVISED: answered=${answeredCount}, nextIndex=${nextQuestionIndex}`);
     return {
-      answeredCount: answeredQuestions,
-      nextQuestionIndex: nextQuestionIndex
+        answeredCount,
+        nextQuestionIndex
     };
   }, []);
 
-  // FIXED: Enhanced demo answer logic with actual question index
-  const findAndSetSuggestedAnswer = useCallback((assistantContent: string, phase?: 'discovery' | 'messaging' | 'audience' | 'complete', currentQuestionIndex?: number) => {
-    const phaseToCheck = phase || currentPhase;
-    const questionIndex = currentQuestionIndex !== undefined ? currentQuestionIndex : actualQuestionIndex;
-    
-    console.log(`Demo answer check: phase=${phaseToCheck}, questionIndex=${questionIndex}, actualQuestionIndex=${actualQuestionIndex}`);
-    
-    if (phaseToCheck === 'complete' || questionIndex >= PREDEFINED_QUESTIONS.length) {
+
+  const findAndSetSuggestedAnswer = useCallback((assistantContent: string, phase: PhaseId, currentQuestionIndex: number) => {
+    if (phase === 'complete') {
       setSuggestedAnswer(null);
       return;
     }
-
-    // Use actual question index for demo answer matching
-    const demoAnswer = getDemoAnswerForQuestion(assistantContent, phaseToCheck, questionIndex);
-    
+    // This now uses the much more reliable index from the new `calculateQuestionProgress`.
+    const demoAnswer = getDemoAnswerForQuestion(assistantContent, phase, currentQuestionIndex);
     if (demoAnswer) {
-      console.log(`Setting demo answer for ${phaseToCheck} phase, question index: ${questionIndex}`);
+      console.log(`Setting demo answer for ${phase} phase, question index: ${currentQuestionIndex}`);
       setSuggestedAnswer(demoAnswer);
     } else {
       setSuggestedAnswer(null);
     }
-  }, [currentPhase, actualQuestionIndex]);
+  }, []);
 
-  // Enhanced report download function
   const downloadReport = async (reportType: 'discovery' | 'messaging' | 'audience' | 'complete') => {
     if (!reports[reportType]) {
       toast.error('Report not available');
@@ -200,29 +179,18 @@ const Chat: React.FC = () => {
   };
 
   useEffect(() => {
-    let scrollTimeout: NodeJS.Timeout;
-    
     if (messages.length > 0 || isTyping) {
-      scrollTimeout = setTimeout(() => {
-        scrollToBottom(isTyping ? 'smooth' : 'instant');
-      }, 100);
+      scrollToBottom();
     }
-    
-    return () => {
-      if (scrollTimeout) {
-        clearTimeout(scrollTimeout);
-      }
-    };
   }, [messages, isTyping, scrollToBottom]);
 
-  // FIXED: Enhanced question counting with actual question index tracking
   useEffect(() => {
     if (messages.length > lastProcessedMessageCount) {
       const { answeredCount, nextQuestionIndex } = calculateQuestionProgress(messages);
       
       if (answeredCount !== questionCount) {
         setQuestionCount(answeredCount);
-        setActualQuestionIndex(nextQuestionIndex);
+        setActualQuestionIndex(nextQuestionIndex); // This state is now more reliable.
         console.log(`Question count updated: ${answeredCount}/${PREDEFINED_QUESTIONS.length}, nextQuestionIndex: ${nextQuestionIndex}`);
       }
       setLastProcessedMessageCount(messages.length);
@@ -595,7 +563,7 @@ const Chat: React.FC = () => {
         </svg>
         Download ${reportNames[reportType]} Report
       </button>
-      <p class="text-xs text-neutral-gray mt-2">💡 <strong>Tip:</strong> Expand the progress ribbon above to access all reports</p>
+      <p class="text-xs text-neutral-gray mt-2"><strong>Tip:</strong> Expand the progress ribbon above to access all reports</p>
     </div>`;
   };
 
@@ -610,30 +578,31 @@ const Chat: React.FC = () => {
 
       const lastMessage = messages.data[0];
       if (lastMessage.role === 'assistant' && lastMessage.content[0].type === 'text') {
-        const rawContent = lastMessage.content[0].text.value;
+        let rawContent = lastMessage.content[0].text.value;
+        let cleanedContent = rawContent;
         
-        const phaseMarkerRegex = /===PHASE_COMPLETE:(discovery|messaging|audience|complete)===/i;
+        const phaseMarkerRegex = /===PHASE_COMPLETE:(discovery|messaging|audience)===/i;
         const phaseMarkerMatch = rawContent.match(phaseMarkerRegex);
         let markedPhaseCompletion = phaseMarkerMatch ? phaseMarkerMatch[1].toLowerCase() : null;
         
-        let cleanedContent = rawContent;
+        // NEW: Guardrail to prevent premature phase completion.
         if (markedPhaseCompletion) {
-          console.log(`Phase completion marker detected: ${markedPhaseCompletion}`);
-        
-          if (interviewId && isValidPhase(markedPhaseCompletion)) {
-            const lines = rawContent.split(/\n/);
-            const markerLineIndex = lines.findIndex(line => /===PHASE_COMPLETE:[a-z]+===/i.test(line));
-            
-            if (markerLineIndex !== -1) {
-              lines.splice(markerLineIndex, 1);
-              
-              while (markerLineIndex < lines.length && lines[markerLineIndex].trim() === '') {
-                lines.splice(markerLineIndex, 1);
-              }
-              
-              cleanedContent = lines.join('\n');
+            const requiredQuestions = {
+                discovery: 3,
+                messaging: 6,
+                audience: 9
+            };
+            const requiredCount = requiredQuestions[markedPhaseCompletion as keyof typeof requiredQuestions];
+
+            // Check the frontend's own state before trusting the assistant.
+            if (questionCount < requiredCount) {
+                console.warn(`Assistant attempted to complete phase '${markedPhaseCompletion}' prematurely. Frontend count is ${questionCount}, required is ${requiredCount}. Ignoring marker.`);
+                toast.error("It looks like we have a few more things to cover in this section first.", { duration: 4000 });
+                
+                // Strip the marker and proceed as if it was a normal message.
+                cleanedContent = rawContent.replace(phaseMarkerRegex, '').trim();
+                markedPhaseCompletion = null;
             }
-          }
         }
         
         const { reportContents, remainingContent } = parseAssistantResponse(cleanedContent);
@@ -797,7 +766,7 @@ const Chat: React.FC = () => {
             
           } else if (processedReportType === 'complete') {
             // Final completion message
-            const finalMessage = `🎉 **Congratulations! Your Brand Alchemy Spark is Complete!**
+            const finalMessage = `**Congratulations! Your Brand Alchemy Spark is Complete!**
 
 Thank you for this illuminating journey through your brand's authentic essence. We've uncovered powerful insights about your brand identity, messaging consistency, and audience alignment.
 
@@ -809,7 +778,7 @@ ${createDownloadLinkComponent('complete')}
 - Professional brand analysis and insights
 - Personalized transformation strategy
 
-📊 **Access All Reports:** Expand the progress ribbon above to download individual phase reports
+**Access All Reports:** Expand the progress ribbon above to download individual phase reports
 
 Your brand has tremendous potential, and these insights provide the roadmap to unlock it. This analysis demonstrates the type of strategic transformation available through comprehensive brand development.
 
@@ -940,9 +909,20 @@ Ready to take your brand to the next level? The insights you've discovered here 
     if (!input.trim() || !threadId || !interviewId || isLoading) return;
     setSuggestedAnswer(null);
 
+    let userContent = input.trim();
+    
+    // NEW: Check for substantiveness *before* sending the message.
+    const isResponseSubstantive = isSubstantive(userContent, questionCount);
+
+    if (!isResponseSubstantive) {
+        // If the answer is brief, give the user feedback and prepend a note for the assistant.
+        toast('Your answer seems a bit brief. Asking the assistant for a follow-up.', { icon: '✍️', duration: 4000 });
+        userContent = `[System Note: My previous answer was brief. Please ask me a clarifying follow-up question to help me provide more detail before we move on.]\n\nMy answer was: "${userContent}"`;
+    }
+
     const userMessage: Message = {
       role: 'user',
-      content: input.trim(),
+      content: userContent, // Use the potentially modified content
       timestamp: new Date(),
       phase: currentPhase
     };
@@ -956,31 +936,17 @@ Ready to take your brand to the next level? The insights you've discovered here 
     setProcessingStage('sending');
 
     try {
-      // Check context size before sending
-      await trimContextIfNeeded(threadId);
-      
-      setProcessingStage('translating');
       await openai.beta.threads.messages.create(threadId, {
         role: 'user',
         content: userMessage.content
       });
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      setProcessingStage('reading');
-      await ensureNoActiveRuns(threadId);
-      
       const run = await openai.beta.threads.runs.create(threadId, {
         assistant_id: config.openai.assistantId
       });
 
-      setProcessingStage('thinking');
       await waitForRunCompletion(threadId, run.id);
       
-      setProcessingStage('formulating');
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      setProcessingStage('finalizing');
       await processAssistantResponse(threadId);
       
     } catch (error) {
