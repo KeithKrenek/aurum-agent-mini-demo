@@ -126,7 +126,7 @@ const processTextLine = (
       
       pdf.setTextColor(0, 0, 0);
       pdf.text(text, x, y);
-      return { y: y + 45, newPage: false };
+      return { y: y + 35, newPage: false };
     }
   }
 
@@ -156,7 +156,7 @@ const processTextLine = (
       
       pdf.setTextColor(0, 0, 0);
       pdf.text(text, x, y);
-      return { y: y + 35, newPage: false };
+      return { y: y + 25, newPage: false };
     }
   }
 
@@ -186,7 +186,7 @@ const processTextLine = (
       
       pdf.setTextColor(0, 0, 0);
       pdf.text(text, x, y);
-      return { y: y + 28, newPage: false };
+      return { y: y + 18, newPage: false };
     }
   }
 
@@ -216,7 +216,7 @@ const processTextLine = (
       
       pdf.setTextColor(0, 0, 0);
       pdf.text(text, x, y);
-      return { y: y + 25, newPage: false };
+      return { y: y + 15, newPage: false };
     }
   }
 

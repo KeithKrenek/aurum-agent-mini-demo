@@ -1,4 +1,4 @@
-// Enhanced constants with fixed demo answer logic and better organization
+// Enhanced constants with improved question matching and robust logic
 
 export const PHASE_QUESTIONS = {
     'discovery': 3,
@@ -118,31 +118,59 @@ export const PHASE_CONFIG = {
   }
 } as const;
 
-// FIXED: Enhanced question keywords for better demo answer matching
+// FIXED: Much more robust question keywords with multiple matching strategies
 export const QUESTION_KEYWORDS = {
   discovery: [
-    // Question 1: Competitors/differentiation
-    ['competitors', 'choose', 'business', 'different', 'why', 'over'],
-    // Question 2: Principles/beliefs
-    ['principles', 'beliefs', 'guide', 'demonstrate', 'values', 'three'],
-    // Question 3: Personality
-    ['personality', 'person', 'networking', 'act', 'speak', 'friend']
+    // Question 1: Competitors/differentiation - expanded keywords
+    ['competitors', 'choose', 'business', 'different', 'why', 'over', 'customers', 'ask', 'answer', 'difference', 'positive'],
+    // Question 2: Principles/beliefs - expanded keywords  
+    ['principles', 'beliefs', 'guide', 'demonstrate', 'values', 'three', 'run', 'treat', 'customers', 'operations', 'way'],
+    // Question 3: Personality - expanded keywords
+    ['personality', 'person', 'networking', 'act', 'speak', 'friend', 'business', 'walking', 'event', 'describe']
   ],
   messaging: [
-    // Question 1: One sentence explanation
-    ['explain', 'special', 'sentence', 'capture', 'care', 'short'],
-    // Question 2: Communication style
-    ['casual', 'friendly', 'professional', 'formal', 'style', 'talk'],
-    // Question 3: Consistency
-    ['website', 'social', 'materials', 'story', 'message', 'everywhere']
+    // Question 1: One sentence explanation - expanded keywords
+    ['explain', 'special', 'sentence', 'capture', 'care', 'short', 'business', 'what', 'makes', 'customers', 'should'],
+    // Question 2: Communication style - expanded keywords
+    ['casual', 'friendly', 'professional', 'formal', 'style', 'talk', 'business', 'tend', 'lines', 'write', 'sounds'],
+    // Question 3: Consistency - expanded keywords
+    ['website', 'social', 'materials', 'story', 'message', 'everywhere', 'marketing', 'telling', 'same', 'differs', 'places']
   ],
   audience: [
-    // Question 1: Favorite customer
-    ['favorite', 'customer', 'wish', 'fit', 'great', 'type'],
-    // Question 2: Customer problems
-    ['problems', 'challenges', 'customers', 'face', 'motivates', 'biggest'],
-    // Question 3: Message relevance
-    ['posts', 'emails', 'address', 'relevant', 'changes', 'recent']
+    // Question 1: Favorite customer - expanded keywords
+    ['favorite', 'customer', 'wish', 'fit', 'great', 'type', 'think', 'about', 'more', 'thing', 'makes'],
+    // Question 2: Customer problems - expanded keywords
+    ['problems', 'challenges', 'customers', 'face', 'motivates', 'biggest', 'three', 'before', 'find', 'business', 'help'],
+    // Question 3: Message relevance - expanded keywords
+    ['posts', 'emails', 'address', 'relevant', 'changes', 'recent', 'social', 'media', 'directly', 'problems', 'identified']
+  ]
+} as const;
+
+// Enhanced question signature matching for more robust detection
+export const QUESTION_SIGNATURES = {
+  discovery: [
+    // Question 1 signatures
+    ['customers ask why they should choose', 'choose your business over competitors', 'positive difference'],
+    // Question 2 signatures
+    ['three principles or beliefs guide', 'how you run your business', 'demonstrate this in your day-to-day'],
+    // Question 3 signatures
+    ['business were a person walking', 'networking event', 'describe their personality']
+  ],
+  messaging: [
+    // Question 1 signatures
+    ['explain what makes your business special', 'one short sentence', 'capture both what you do'],
+    // Question 2 signatures
+    ['casual and friendly, or more professional', 'write a few lines about your business', 'in this style'],
+    // Question 3 signatures
+    ['website, social media, and any marketing', 'telling the same story everywhere', 'message differs']
+  ],
+  audience: [
+    // Question 1 signatures
+    ['favorite customer – the type you wish', 'great fit for your business', 'one thing that makes them'],
+    // Question 2 signatures
+    ['three biggest problems or challenges', 'before they find your business', 'motivates them to seek help'],
+    // Question 3 signatures
+    ['recent social media posts or emails', 'directly address the problems', 'more relevant to your ideal customers']
   ]
 } as const;
 
@@ -159,13 +187,19 @@ export const getMockAnswersByPhase = (phase: keyof typeof MOCK_ANSWERS) => {
   return MOCK_ANSWERS[phase];
 };
 
-// FIXED: Enhanced demo answer matching logic with better question detection
+// COMPLETELY REWRITTEN: Super robust demo answer matching with multiple fallback strategies
 export const getDemoAnswerForQuestion = (
   assistantContent: string,
-  currentPhase: keyof typeof QUESTION_KEYWORDS,
-  questionCount: number
+  currentPhase: keyof typeof QUESTION_KEYWORDS | 'complete',
+  questionIndex: number
 ): string | null => {
-  console.log(`getDemoAnswerForQuestion called with phase: ${currentPhase}, questionCount: ${questionCount}`);
+  console.log(`getDemoAnswerForQuestion called with phase: ${currentPhase}, questionIndex: ${questionIndex}`);
+  
+  // Early return for complete phase
+  if (currentPhase === 'complete') {
+    console.log('Complete phase, no demo answers');
+    return null;
+  }
   
   if (!QUESTION_KEYWORDS[currentPhase] || !MOCK_ANSWERS[currentPhase]) {
     console.log('Invalid phase or no keywords/answers available');
@@ -173,78 +207,109 @@ export const getDemoAnswerForQuestion = (
   }
 
   const phaseKeywords = QUESTION_KEYWORDS[currentPhase];
+  const phaseSignatures = QUESTION_SIGNATURES[currentPhase];
   const phaseAnswers = MOCK_ANSWERS[currentPhase];
   
-  // FIXED: Better logic for determining which question in the phase
-  const phaseStartQuestions = {
-    discovery: 0,
-    messaging: 3,
-    audience: 6
-  };
+  // Boundary checks
+  if (questionIndex >= PREDEFINED_QUESTIONS.length || questionIndex < 0) {
+    console.log(`Question index ${questionIndex} is out of bounds`);
+    return null;
+  }
   
-  const phaseStart = phaseStartQuestions[currentPhase];
-  const questionInPhase = questionCount - phaseStart;
+  // Determine which question in the current phase we should be on
+  const phaseStartIndices = { discovery: 0, messaging: 3, audience: 6 };
+  const phaseStartIndex = phaseStartIndices[currentPhase];
+  const questionInPhase = questionIndex - phaseStartIndex;
   
-  console.log(`Phase start: ${phaseStart}, question in phase: ${questionInPhase}`);
+  console.log(`Phase start index: ${phaseStartIndex}, question in phase: ${questionInPhase}`);
   
-  // FIXED: More precise question matching strategy
-  // Strategy 1: Check for specific question patterns based on position in phase
-  if (questionInPhase >= 0 && questionInPhase < phaseKeywords.length) {
-    const expectedKeywords = phaseKeywords[questionInPhase];
-    const keywordMatches = expectedKeywords.filter(keyword =>
-      assistantContent.toLowerCase().includes(keyword.toLowerCase())
-    ).length;
-    
-    // Need at least 2 keyword matches for confidence
-    if (keywordMatches >= 2) {
-      console.log(`Matched question ${questionInPhase} with ${keywordMatches} keywords`);
+  if (questionInPhase < 0 || questionInPhase >= phaseKeywords.length) {
+    console.log(`Question in phase ${questionInPhase} is out of range for ${currentPhase} phase`);
+    return null;
+  }
+
+  const contentLower = assistantContent.toLowerCase();
+  
+  // Strategy 1: Direct question signature matching (most reliable)
+  const expectedSignatures = phaseSignatures[questionInPhase];
+  for (const signature of expectedSignatures) {
+    if (contentLower.includes(signature.toLowerCase())) {
+      console.log(`Direct signature match for question ${questionInPhase}: "${signature}"`);
       return phaseAnswers[questionInPhase];
     }
   }
   
-  // Strategy 2: Check all questions in the phase if position-based matching fails
-  for (let i = 0; i < phaseKeywords.length; i++) {
-    const keywords = phaseKeywords[i];
-    const keywordMatches = keywords.filter(keyword =>
-      assistantContent.toLowerCase().includes(keyword.toLowerCase())
-    ).length;
+  // Strategy 2: Full question text matching
+  const expectedQuestionIndex = phaseStartIndex + questionInPhase;
+  if (expectedQuestionIndex < PREDEFINED_QUESTIONS.length) {
+    const expectedQuestion = PREDEFINED_QUESTIONS[expectedQuestionIndex];
     
-    if (keywordMatches >= 2) {
-      console.log(`Fallback matched question ${i} with ${keywordMatches} keywords`);
-      return phaseAnswers[i];
-    }
-  }
-  
-  // Strategy 3: Check for specific question snippets from PREDEFINED_QUESTIONS
-  const phaseQuestionIndices = PHASE_CONFIG[currentPhase].questionIndices;
-  for (let i = 0; i < phaseQuestionIndices.length; i++) {
-    const questionIndex = phaseQuestionIndices[i];
-    const questionText = PREDEFINED_QUESTIONS[questionIndex];
-    
-    // Check multiple snippets of the question
-    const snippets = [
-      questionText.substring(0, 30),
-      questionText.substring(0, 50),
-      questionText.split('?')[0] + '?'
+    // Check multiple substrings of the question
+    const questionParts = [
+      expectedQuestion.substring(0, 50),
+      expectedQuestion.substring(0, 30),
+      expectedQuestion.split('?')[0] + '?'
     ];
     
-    const hasSnippet = snippets.some(snippet =>
-      assistantContent.toLowerCase().includes(snippet.toLowerCase())
-    );
+    for (const part of questionParts) {
+      if (contentLower.includes(part.toLowerCase())) {
+        console.log(`Direct question part match for question ${questionInPhase}: "${part}"`);
+        return phaseAnswers[questionInPhase];
+      }
+    }
     
-    if (hasSnippet) {
-      console.log(`Matched question via snippet: ${i}`);
-      return phaseAnswers[i];
+    // Word similarity check
+    const questionWords = expectedQuestion.toLowerCase().split(' ').filter(w => w.length > 3);
+    const matchingWords = questionWords.filter(word => contentLower.includes(word));
+    const similarity = matchingWords.length / questionWords.length;
+    
+    if (similarity >= 0.35) { // Slightly lower threshold for better matching
+      console.log(`Question similarity match for question ${questionInPhase}: ${Math.round(similarity * 100)}%`);
+      return phaseAnswers[questionInPhase];
     }
   }
   
-  // Strategy 4: Phase transition - if we just entered a new phase, give first answer
+  // Strategy 3: Keyword density matching for current question
+  const expectedKeywords = phaseKeywords[questionInPhase];
+  const keywordMatches = expectedKeywords.filter(keyword =>
+    contentLower.includes(keyword.toLowerCase())
+  );
+  
+  const keywordScore = keywordMatches.length / expectedKeywords.length;
+  if (keywordScore >= 0.3) { // Lower threshold than before
+    console.log(`Keyword matched question ${questionInPhase} with ${keywordMatches.length}/${expectedKeywords.length} keywords (${Math.round(keywordScore * 100)}%)`);
+    return phaseAnswers[questionInPhase];
+  }
+  
+  // Strategy 4: Fallback keyword matching across all questions in phase
+  let bestMatch = -1;
+  let bestScore = 0;
+  
+  for (let i = 0; i < phaseKeywords.length; i++) {
+    const keywords = phaseKeywords[i];
+    const matches = keywords.filter(keyword =>
+      contentLower.includes(keyword.toLowerCase())
+    ).length;
+    
+    const score = matches / keywords.length;
+    if (score > bestScore && matches >= 2) { // Require at least 2 matches
+      bestScore = score;
+      bestMatch = i;
+    }
+  }
+  
+  if (bestMatch >= 0) {
+    console.log(`Fallback matched question ${bestMatch} with score ${Math.round(bestScore * 100)}% (expected: ${questionInPhase})`);
+    return phaseAnswers[bestMatch];
+  }
+  
+  // Strategy 5: Phase-based fallback for new phases
   if (questionInPhase === 0) {
-    console.log('New phase detected, returning first answer');
+    console.log(`New phase start for ${currentPhase}, returning first answer`);
     return phaseAnswers[0];
   }
   
-  console.log('No demo answer match found');
+  console.log(`No demo answer match found for phase: ${currentPhase}, questionInPhase: ${questionInPhase}, questionIndex: ${questionIndex}`);
   return null;
 };
 
@@ -298,11 +363,16 @@ export const APP_CONFIG = {
   SESSION_CHECK_INTERVAL: 5 * 60 * 1000, // 5 minutes
   AUTO_SAVE_INTERVAL: 30000, // 30 seconds
   
-  // Retry and error handling
+  // Retry and error handling - IMPROVED for robustness
   MAX_RETRY_ATTEMPTS: 3,
   RETRY_DELAY_BASE: 1000, // milliseconds
   EXPONENTIAL_BACKOFF_FACTOR: 2,
   MAX_RETRY_DELAY: 10000, // 10 seconds
+  
+  // API timeouts - EXTENDED for complex operations
+  API_REQUEST_TIMEOUT: 120000, // 2 minutes
+  OPENAI_MAX_WAIT_TIME: 600000, // 10 minutes
+  PDF_GENERATION_TIMEOUT: 60000, // 1 minute
   
   // Input validation
   MAX_BRAND_NAME_LENGTH: 100,
@@ -316,11 +386,6 @@ export const APP_CONFIG = {
   MESSAGE_ANIMATION_DURATION: 500,
   TYPING_INDICATOR_DELAY: 1000,
   DEMO_ANSWER_DISPLAY_TIME: 1000,
-  
-  // API and processing
-  PDF_GENERATION_TIMEOUT: 30000, // 30 seconds
-  API_REQUEST_TIMEOUT: 60000, // 60 seconds
-  OPENAI_MAX_WAIT_TIME: 300000, // 5 minutes
   
   // Demo and development
   DEMO_MODE_ENABLED: true,

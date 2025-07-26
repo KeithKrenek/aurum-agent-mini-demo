@@ -642,7 +642,7 @@ const BrandEntry: React.FC = () => {
                                         exit={{ opacity: 0 }}
                                         className="flex items-center justify-center gap-3"
                                     >
-                                        <Sparkles className="h-5 w-5" />
+                                        {/* <Sparkles className="h-5 w-5" /> */}
                                         Get Your Brand Alchemy Spark
                                     </motion.span>
                                 )}
@@ -656,7 +656,7 @@ const BrandEntry: React.FC = () => {
                             transition={{ delay: 1.1 }}
                             className="text-xs text-neutral-gray text-center"
                         >
-                            No personal info required for this 5-10 min demo
+                            Personal info not required for this 5-10 min demo
                         </motion.p>
                     </form>
                 </div>

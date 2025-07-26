@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Send, Loader, ArrowRight } from 'lucide-react';
+import { Send, Loader, ArrowRight, Edit3 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface MessageInputProps {
@@ -23,7 +23,8 @@ const MessageInput: React.FC<MessageInputProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
-  const [fillStage, setFillStage] = useState<'idle' | 'expanding' | 'filling' | 'submitting'>('idle');
+  const [fillStage, setFillStage] = useState<'idle' | 'expanding' | 'filling' | 'ready'>('idle');
+  const [justUsedDemo, setJustUsedDemo] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -31,6 +32,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
       e.preventDefault();
       if (!isLoading && input.trim() && !isAnimating) {
         sendMessage();
+        setJustUsedDemo(false); // Reset demo state after sending
       }
     }
   };
@@ -41,11 +43,16 @@ const MessageInput: React.FC<MessageInputProps> = ({
     const textarea = e.target;
     textarea.style.height = 'inherit';
     const computedHeight = Math.min(textarea.scrollHeight, 200);
-    textarea.style.height = `${Math.max(48, computedHeight)}px`;
+    textarea.style.height = `${Math.max(56, computedHeight)}px`; // Increased min height for better alignment
     setInput(e.target.value);
+    
+    // Clear demo state when user manually types
+    if (justUsedDemo && e.target.value !== suggestedAnswer) {
+      setJustUsedDemo(false);
+    }
   };
 
-  // FIXED: Enhanced demo answer usage with better visual separation
+  // FIXED: Enhanced demo answer usage - fills text but doesn't auto-submit
   const handleUseSuggestion = async () => {
     if (!suggestedAnswer || isAnimating) return;
     
@@ -55,7 +62,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
     // Stage 1: Expand the input to accommodate the demo text
     if (inputRef.current) {
       const requiredHeight = Math.min(
-        Math.ceil(suggestedAnswer.length / 80) * 20 + 48,
+        Math.ceil(suggestedAnswer.length / 80) * 20 + 56, // Increased base height
         200
       );
       
@@ -66,7 +73,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
     // Wait for expansion animation
     await new Promise(resolve => setTimeout(resolve, 300));
     
-    // Stage 2: Fill the input with demo text (with reduced opacity initially)
+    // Stage 2: Fill the input with demo text
     setFillStage('filling');
     setInput(suggestedAnswer);
     onUseSuggestion();
@@ -74,25 +81,29 @@ const MessageInput: React.FC<MessageInputProps> = ({
     // Wait to show the filled text
     await new Promise(resolve => setTimeout(resolve, 800));
     
-    // Stage 3: Prepare for submission
-    setFillStage('submitting');
+    // Stage 3: Ready for user review/editing
+    setFillStage('ready');
+    setJustUsedDemo(true);
     await new Promise(resolve => setTimeout(resolve, 400));
     
-    // Auto-submit
-    if (!isLoading) {
-      sendMessage();
-    }
-    
-    // Reset animation state
+    // Reset animation state but keep demo state
     setIsAnimating(false);
     setFillStage('idle');
+    
+    // Focus the input for potential editing
+    if (inputRef.current) {
+      inputRef.current.focus();
+      // Place cursor at end of text
+      inputRef.current.setSelectionRange(suggestedAnswer.length, suggestedAnswer.length);
+    }
   };
 
   // Reset height when input is cleared
   useEffect(() => {
     if (!input && inputRef.current && !isAnimating) {
-      inputRef.current.style.height = '48px';
+      inputRef.current.style.height = '56px'; // Increased base height
       setIsExpanded(false);
+      setJustUsedDemo(false);
     }
   }, [input, isAnimating]);
 
@@ -106,9 +117,9 @@ const MessageInput: React.FC<MessageInputProps> = ({
   return (
     <footer className="bg-white border-t border-neutral-gray">
       <div className="max-w-4xl mx-auto">
-        {/* Enhanced Demo Answer Section with smooth animations */}
+        {/* Enhanced Demo Answer Section */}
         <AnimatePresence>
-          {suggestedAnswer && !isAnimating && (
+          {suggestedAnswer && !isAnimating && !justUsedDemo && (
             <motion.div 
               initial={{ opacity: 0, height: 0, y: -20 }}
               animate={{ opacity: 1, height: 'auto', y: 0 }}
@@ -179,10 +190,10 @@ const MessageInput: React.FC<MessageInputProps> = ({
           )}
         </AnimatePresence>
 
-        {/* Input Section with enhanced animations and better overlay handling */}
+        {/* Input Section with fixed alignment */}
         <div className="p-4" ref={containerRef}>
           <motion.div 
-            className="flex items-end gap-2"
+            className="flex items-end gap-3" // Increased gap and use items-end for bottom alignment
             animate={{ 
               scale: isAnimating ? 1.02 : 1,
             }}
@@ -194,9 +205,11 @@ const MessageInput: React.FC<MessageInputProps> = ({
                 value={input}
                 onChange={handleInput}
                 onKeyPress={handleKeyPress}
-                className={`w-full p-3 border-2 rounded-lg focus:outline-none resize-none min-h-[48px] max-h-[200px] transition-all duration-300 ${
+                className={`w-full p-4 border-2 rounded-lg focus:outline-none resize-none min-h-[56px] max-h-[200px] transition-all duration-300 ${
                   isAnimating 
                     ? 'border-goldenrod ring-2 ring-goldenrod/20' 
+                    : justUsedDemo
+                    ? 'border-desert-sand ring-2 ring-desert-sand/20'
                     : 'border-neutral-gray focus:border-dark-gray focus:ring-2 focus:ring-dark-gray/20'
                 } ${
                   fillStage === 'filling' ? 'text-opacity-60' : 'text-opacity-100'
@@ -213,7 +226,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
                 }}
               />
               
-              {/* FIXED: Enhanced loading indicator with better visibility */}
+              {/* Enhanced loading indicator */}
               <AnimatePresence>
                 {isAnimating && (
                   <motion.div
@@ -239,15 +252,15 @@ const MessageInput: React.FC<MessageInputProps> = ({
                           <span className="text-sm font-medium">Filling demo answer...</span>
                         </>
                       )}
-                      {fillStage === 'submitting' && (
+                      {fillStage === 'ready' && (
                         <>
                           <motion.div
-                            animate={{ x: [0, 10, 0] }}
-                            transition={{ duration: 0.5, repeat: Infinity }}
+                            animate={{ rotate: [0, 360] }}
+                            transition={{ duration: 0.5 }}
                           >
-                            <ArrowRight className="w-6 h-6" />
+                            <Edit3 className="w-6 h-6" />
                           </motion.div>
-                          <span className="text-sm font-medium">Submitting...</span>
+                          <span className="text-sm font-medium">Ready to edit or send!</span>
                         </>
                       )}
                     </div>
@@ -256,10 +269,11 @@ const MessageInput: React.FC<MessageInputProps> = ({
               </AnimatePresence>
             </div>
             
+            {/* FIXED: Submit button with consistent height */}
             <motion.button
               onClick={sendMessage}
               disabled={isLoading || !input.trim() || isAnimating}
-              className="bg-black text-white p-3 rounded-lg hover:bg-dark-gray transition-colors duration-200 disabled:bg-neutral-gray disabled:cursor-not-allowed h-[48px] w-[48px] flex items-center justify-center group"
+              className="bg-black text-white p-4 rounded-lg hover:bg-dark-gray transition-colors duration-200 disabled:bg-neutral-gray disabled:cursor-not-allowed h-[56px] w-[56px] flex items-center justify-center group flex-shrink-0" // Added flex-shrink-0 and consistent height
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
@@ -271,9 +285,9 @@ const MessageInput: React.FC<MessageInputProps> = ({
             </motion.button>
           </motion.div>
           
-          {/* Enhanced guidance text with stage-specific messaging */}
+          {/* FIXED: Enhanced guidance text with better demo messaging */}
           <AnimatePresence mode="wait">
-            {suggestedAnswer && !isAnimating && (
+            {suggestedAnswer && !isAnimating && !justUsedDemo && (
               <motion.p 
                 key="demo-available"
                 initial={{ opacity: 0, y: 10 }}
@@ -282,6 +296,18 @@ const MessageInput: React.FC<MessageInputProps> = ({
                 className="text-xs text-neutral-gray mt-2 text-center"
               >
                 💡 <span className="font-medium">New to brand development?</span> Try the demo answer for realistic results!
+              </motion.p>
+            )}
+            
+            {justUsedDemo && !isAnimating && (
+              <motion.p
+                key="demo-used"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="text-xs text-desert-sand mt-2 text-center font-medium"
+              >
+                ✨ Demo answer loaded! You can edit it or press Enter/Send to continue
               </motion.p>
             )}
             
@@ -301,12 +327,24 @@ const MessageInput: React.FC<MessageInputProps> = ({
                   <div className="w-1 h-1 bg-goldenrod rounded-full"></div>
                   <span>
                     {fillStage === 'expanding' && 'Preparing input field...'}
-                    {fillStage === 'filling' && 'Demo answer will be submitted automatically'}
-                    {fillStage === 'submitting' && 'Sending your response...'}
+                    {fillStage === 'filling' && 'Loading demo answer for you to review...'}
+                    {fillStage === 'ready' && 'Demo answer ready! Edit if needed, then send'}
                   </span>
                   <div className="w-1 h-1 bg-goldenrod rounded-full"></div>
                 </motion.div>
               </motion.div>
+            )}
+            
+            {!suggestedAnswer && !justUsedDemo && !isAnimating && input.trim() && (
+              <motion.p
+                key="ready-to-send"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="text-xs text-neutral-gray mt-2 text-center"
+              >
+                Press Enter or click Send to continue
+              </motion.p>
             )}
           </AnimatePresence>
         </div>
