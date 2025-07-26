@@ -4,14 +4,25 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { db } from './firebase';
 import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
+import { motion } from 'framer-motion';
+import { Download, FileText } from 'lucide-react';
 import { ProgressManager } from './ProgressManager';
 import { Interview, Message, PhaseId, isValidPhase } from './types/interview';
 import MessageInput from './MessageInput';
 import MessageBubble from './MessageBubble';
 import PhaseProgress from './PhaseProgress';
 import { config } from './config/environment';
-import { PREDEFINED_QUESTIONS, MOCK_ANSWERS } from './types/constants';
+import { PREDEFINED_QUESTIONS, MOCK_ANSWERS, getDemoAnswerForQuestion } from './types/constants';
 import { ProcessingStage, processingMessages } from './types/constants';
+import { generatePDF } from './pdfGenerator';
+
+// Enhanced error types for better error handling
+class ChatError extends Error {
+  constructor(message: string, public type: 'network' | 'api' | 'validation' | 'timeout' = 'api') {
+    super(message);
+    this.name = 'ChatError';
+  }
+}
 
 const Chat: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -26,6 +37,7 @@ const Chat: React.FC = () => {
   const [processingStage, setProcessingStage] = useState<ProcessingStage>('sending');
   const [lastProcessedMessageCount, setLastProcessedMessageCount] = useState(0);
   const [retryCount, setRetryCount] = useState(0);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false); // NEW: Report generation status
   const messageListRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const progressManager = useRef<ProgressManager | null>(null);
@@ -33,7 +45,6 @@ const Chat: React.FC = () => {
   const { interviewId: urlInterviewId } = useParams<{ interviewId: string }>();
   const inputBoxRef = useRef<HTMLDivElement>(null);
 
-  // Fallback to sessionStorage
   const interviewId = urlInterviewId || sessionStorage.getItem('interviewId');
  
   const openai = new OpenAI({
@@ -61,63 +72,94 @@ const Chat: React.FC = () => {
     }
   }, []);
 
-  // Enhanced question detection and counting logic
+  // FIXED: Enhanced question detection and counting logic
   const calculateQuestionProgress = useCallback((messageHistory: Message[]): number => {
-    // Only count completed question-answer pairs
     let completedQuestions = 0;
     
-    // Look for pairs where assistant asks a question and user responds
+    // Only count questions that have been both asked and answered
     for (let i = 0; i < messageHistory.length - 1; i++) {
       const currentMessage = messageHistory[i];
       const nextMessage = messageHistory[i + 1];
       
+      // Must be assistant question followed by user answer
       if (currentMessage.role === 'assistant' && nextMessage.role === 'user') {
+        // FIXED: Ensure content is a string before calling toLowerCase()
+        const messageContent = typeof currentMessage.content === 'string' 
+          ? currentMessage.content 
+          : '';
+          
+        const nextMessageContent = typeof nextMessage.content === 'string'
+          ? nextMessage.content
+          : '';
+        
         // Check if assistant message contains a question from our predefined list
         const containsQuestion = PREDEFINED_QUESTIONS.some(question => {
-          const questionSnippet = question.substring(0, 40).toLowerCase();
-          return currentMessage.content.toLowerCase().includes(questionSnippet);
+          const questionSnippet = question.substring(0, 50).toLowerCase();
+          return messageContent.toLowerCase().includes(questionSnippet);
         });
         
-        if (containsQuestion) {
+        // Also check if the user response is substantive (not just repeated demo answer)
+        const isSubstantiveAnswer = nextMessageContent.trim().length > 20 && 
+                                  !nextMessageContent.includes('Problem 1: Fear of AI');
+        
+        if (containsQuestion && isSubstantiveAnswer) {
           completedQuestions++;
         }
       }
     }
     
-    // Don't exceed the total number of questions
     return Math.min(completedQuestions, PREDEFINED_QUESTIONS.length);
   }, []);
 
-  const findAndSetSuggestedAnswer = useCallback((assistantContent: string) => {
-    if (currentPhase === 'complete' || !isValidPhase(currentPhase)) {
+  // FIXED: Enhanced demo answer logic with better question tracking
+  const findAndSetSuggestedAnswer = useCallback((assistantContent: string, phase?: PhaseId, currentQuestionCount?: number) => {
+    const phaseToCheck = phase || currentPhase;
+    const questionCountToUse = currentQuestionCount !== undefined ? currentQuestionCount : questionCount;
+    
+    if (phaseToCheck === 'complete' || !isValidPhase(phaseToCheck)) {
       setSuggestedAnswer(null);
       return;
     }
 
-    const phaseQuestionIndices = {
-      discovery: [0, 1, 2],
-      messaging: [3, 4, 5],
-      audience: [6, 7, 8],
-    };
+    // Use the enhanced demo answer function from constants
+    const demoAnswer = getDemoAnswerForQuestion(assistantContent, phaseToCheck, questionCountToUse);
+    
+    if (demoAnswer) {
+      console.log(`Setting demo answer for ${phaseToCheck} phase, question count: ${questionCountToUse}`);
+      setSuggestedAnswer(demoAnswer);
+    } else {
+      setSuggestedAnswer(null);
+    }
+  }, [currentPhase, questionCount]);
 
-    const questionIndices = phaseQuestionIndices[currentPhase];
-    const phaseAnswers = MOCK_ANSWERS[currentPhase];
-
-    for (let i = 0; i < questionIndices.length; i++) {
-      const questionIndex = questionIndices[i];
-      const questionText = PREDEFINED_QUESTIONS[questionIndex];
-
-      if (questionText) {
-        const questionSnippet = questionText.substring(0, 40);
-        if (assistantContent.includes(questionSnippet)) {
-          setSuggestedAnswer(phaseAnswers[i]);
-          return;
-        }
-      }
+  // Enhanced report download function
+  const downloadReport = async (reportType: 'discovery' | 'messaging' | 'audience' | 'complete') => {
+    if (!reports[reportType]) {
+      toast.error('Report not available');
+      return;
     }
     
-    setSuggestedAnswer(null);
-  }, [currentPhase]);
+    try {
+      const brandName = sessionStorage.getItem('brandName') || 'Brand';
+      const phaseNames = {
+        discovery: 'Discovery',
+        messaging: 'Messaging', 
+        audience: 'Audience',
+        complete: 'Complete Brand Analysis'
+      };
+      
+      await generatePDF({
+        brandName,
+        reportParts: [reports[reportType]!],
+        phaseName: phaseNames[reportType]
+      });
+      
+      toast.success('Report downloaded successfully!');
+    } catch (error) {
+      console.error('Download failed:', error);
+      toast.error('Failed to download report');
+    }
+  };
 
   useEffect(() => {
     let scrollTimeout: NodeJS.Timeout;
@@ -135,7 +177,7 @@ const Chat: React.FC = () => {
     };
   }, [messages, isTyping, scrollToBottom]);
 
-  // Enhanced question counting with better logic
+  // FIXED: Enhanced question counting with better logic
   useEffect(() => {
     if (messages.length > lastProcessedMessageCount) {
       const newCount = calculateQuestionProgress(messages);
@@ -220,7 +262,7 @@ const Chat: React.FC = () => {
         }
         
         if (runStatus.status === 'failed' || runStatus.status === 'cancelled') {
-          throw new Error(`Run ${runStatus.status}: ${runStatus.last_error?.message || 'Unknown error'}`);
+          throw new ChatError(`Run ${runStatus.status}: ${runStatus.last_error?.message || 'Unknown error'}`, 'api');
         }
         
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -232,7 +274,7 @@ const Chat: React.FC = () => {
       }
     }
     
-    throw new Error('Run timed out');
+    throw new ChatError('Run timed out', 'timeout');
   };
 
   const checkRunStatus = async (threadId: string, runId: string) => {
@@ -274,7 +316,7 @@ const Chat: React.FC = () => {
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (error) {
       console.error('Error managing active runs:', error);
-      throw error;
+      throw new ChatError('Failed to manage active runs', 'api');
     }
   };
 
@@ -307,12 +349,11 @@ const Chat: React.FC = () => {
     try {
       const interviewDoc = await getDoc(doc(db, 'interviews', interviewId));
       if (!interviewDoc.exists()) {
-        console.error('Interview document not found during chat initialization');
-        throw new Error('Interview not found');
+        throw new ChatError('Interview not found', 'validation');
       }
 
       const interviewData = interviewDoc.data() as Interview;
-      console.log('Chat initialization - Interview data:', interviewData); // Debug log
+      console.log('Chat initialization - Interview data:', interviewData);
       
       let threadId = interviewData.threadId;
 
@@ -334,10 +375,27 @@ const Chat: React.FC = () => {
 
       if (interviewData.messages.length === 0) {
         await startNewConversation(threadId);
+      } else {
+        // FIXED: Set demo answer when resuming existing conversation
+        const lastAssistantMessage = interviewData.messages
+          .filter(m => m.role === 'assistant')
+          .pop();
+        
+        if (lastAssistantMessage) {
+          findAndSetSuggestedAnswer(
+            lastAssistantMessage.content, 
+            interviewData.currentPhase,
+            interviewData.questionCount
+          );
+        }
       }
     } catch (error) {
       console.error('Error initializing chat:', error);
-      toast.error('Failed to initialize chat. Please try again.');
+      if (error instanceof ChatError && error.type === 'validation') {
+        toast.error('Session not found. Please start a new journey.');
+      } else {
+        toast.error('Failed to initialize chat. Please try again.');
+      }
       navigate('/');
     }
   };
@@ -374,7 +432,9 @@ const Chat: React.FC = () => {
         };
         setMessages([newMessage]);
         await updateInterviewMessages([newMessage]);
-        findAndSetSuggestedAnswer(newMessage.content);
+        
+        // FIXED: Set demo answer for initial message
+        findAndSetSuggestedAnswer(newMessage.content, currentPhase, 0);
       }
       
     } catch (error) {
@@ -392,6 +452,7 @@ const Chat: React.FC = () => {
     }
   };
 
+  // FIXED: Enhanced report parsing with correct section names
   const parseAssistantResponse = (response: string) => {
     const reportRegex = /```markdown\s*([\s\S]*?)\s*```/g;
     let reportContents: string[] = [];
@@ -415,11 +476,12 @@ const Chat: React.FC = () => {
     if (reportContents.length > 0 && reportContents.some(r => /elevate your brand/i.test(r))) {
       const finalReport = reportContents.find(r => /elevate your brand/i.test(r));
       
+      // FIXED: Updated required sections to match assistant instructions
       const requiredSections = [
         'brand breakthrough',
-        'your brand at a glance',
+        'your brand at a glance', 
         'key observations',
-        'personalized growth formula',
+        'personalized growth roadmap', // FIXED: Was "personalized growth formula"
         'action plan',
         'next steps for growth',
         'prioritization matrix',
@@ -431,11 +493,16 @@ const Chat: React.FC = () => {
       );
       
       if (missingSections.length > 0) {
-        console.error(`Final report missing required sections: ${missingSections.join(', ')}`);
+        console.warn(`Final report missing sections: ${missingSections.join(', ')}`);
       }
       
-      if (!finalReport?.includes('| Recommendation | Impact | Effort | Priority |')) {
-        console.error('Prioritization matrix table is missing or malformatted');
+      // FIXED: Better prioritization matrix detection
+      const hasProperMatrix = finalReport?.includes('| Recommendation | Impact | Effort | Priority |') ||
+                             finalReport?.includes('|Recommendation|Impact|Effort|Priority|') ||
+                             finalReport?.includes('Recommendation') && finalReport?.includes('Priority');
+      
+      if (!hasProperMatrix) {
+        console.warn('Prioritization matrix table may be missing or malformatted');
       }
     }
 
@@ -445,13 +512,33 @@ const Chat: React.FC = () => {
     };
   };
 
+  // NEW: Function to create download link message
+  const createDownloadLinkMessage = (reportType: 'discovery' | 'messaging' | 'audience' | 'complete'): string => {
+    const reportNames = {
+      discovery: 'Brand Elements Discovery',
+      messaging: 'Brand Voice Analysis', 
+      audience: 'Brand Audience Alignment Analysis',
+      complete: 'Complete Brand Transformation'
+    };
+    
+    return `📋 **${reportNames[reportType]} Report Generated!**
+
+Your ${reportNames[reportType].toLowerCase()} report is now ready. You can:
+
+🔽 **Download it directly:** [Click here to download your ${reportNames[reportType].toLowerCase()} report](#download-${reportType})
+
+📊 **Access from progress ribbon:** Expand the progress ribbon at the top of the page to see all available reports
+
+This report contains personalized insights based on your responses and actionable recommendations for your brand development journey.`;
+  };
+
   const processAssistantResponse = async (threadId: string, attemptNumber = 1) => {
     const MAX_RETRIES = 3;
     
     try {
       const messages = await openai.beta.threads.messages.list(threadId);
       if (!messages?.data?.length) {
-        throw new Error('No messages received from OpenAI');
+        throw new ChatError('No messages received from OpenAI', 'api');
       }
 
       const lastMessage = messages.data[0];
@@ -487,29 +574,12 @@ const Chat: React.FC = () => {
         const { reportContents, remainingContent } = parseAssistantResponse(cleanedContent);
 
         let phaseUpdated = false;
+        let newPhase: PhaseId | null = null;
+        let processedReportType: string | null = null;
         
-        if (markedPhaseCompletion && interviewId) {
-          const completedInPhase = calculateQuestionProgress(messages.data.filter(m => m.role === 'assistant' || m.role === 'user').map(m => ({
-            role: m.role as 'user' | 'assistant',
-            content: m.content[0].type === 'text' ? m.content[0].text.value : '',
-            timestamp: new Date(),
-            phase: currentPhase
-          })));
-          
-          const totalInPhase = {
-            'discovery': 3,
-            'messaging': 3,
-            'audience': 3,
-            'complete': 0
-          }[currentPhase] || 0;
-          
-          const isAllQuestionsCompleted = completedInPhase >= totalInPhase;
-          const isMarkerForPreviousPhase = currentPhase !== markedPhaseCompletion;
-          
-          if (!isAllQuestionsCompleted && !isMarkerForPreviousPhase) {
-            console.log(`Ignoring premature phase marker for ${markedPhaseCompletion} (only ${completedInPhase}/${totalInPhase} questions completed)`);
-            markedPhaseCompletion = null;
-          }
+        // NEW: Set report generation status
+        if (reportContents.length > 0) {
+          setIsGeneratingReport(true);
         }
         
         for (const reportContent of reportContents) {
@@ -536,6 +606,7 @@ const Chat: React.FC = () => {
           
           if (reportType && interviewId) {
             console.log(`Processing ${reportType} report`);
+            processedReportType = reportType;
 
             let finalReportContent = reportContent;
             
@@ -552,34 +623,115 @@ const Chat: React.FC = () => {
             setReports(prev => ({...prev, [reportType]: finalReportContent}));
             
             if (reportType !== 'complete') {
-              const nextPhase = getNextPhase(reportType as PhaseId);
-              if (nextPhase) {
-                console.log(`Transitioning phase from ${reportType} to ${nextPhase}`);
+              newPhase = getNextPhase(reportType as PhaseId);
+              if (newPhase) {
+                console.log(`Transitioning phase from ${reportType} to ${newPhase}`);
                 await updateDoc(doc(db, 'interviews', interviewId), {
-                  currentPhase: nextPhase,
+                  currentPhase: newPhase,
                   lastUpdated: new Date()
                 });
-                setCurrentPhase(nextPhase);
+                setCurrentPhase(newPhase);
                 phaseUpdated = true;
               }
             }
           }
         }
+        
+        // NEW: Clear report generation status
+        setIsGeneratingReport(false);
 
+        // ENHANCED: Create better response flow
         if (remainingContent?.trim()) {
-          const newMessage: Message = {
-            role: 'assistant',
-            content: remainingContent,
-            timestamp: new Date(),
-            phase: phaseUpdated ? getNextPhase(currentPhase) || currentPhase : currentPhase
-          };
+          const finalPhase = phaseUpdated && newPhase ? newPhase : currentPhase;
+          
+          // NEW: For phase completions, create a cleaner response
+          if (processedReportType && processedReportType !== 'complete') {
+            // Extract just the acknowledgment and transition, skip redundant text
+            const lines = remainingContent.split('\n').filter(line => line.trim());
+            const cleanLines = lines.filter(line => 
+              !line.includes('Now, let me summarize') && 
+              !line.includes('Your insights have been') &&
+              !line.includes('report:')
+            );
+            
+            // Add download link message
+            const downloadMessage = createDownloadLinkMessage(processedReportType as any);
+            
+            const enhancedContent = cleanLines.length > 0 
+              ? `${cleanLines.join('\n\n')}\n\n${downloadMessage}`
+              : downloadMessage;
+            
+            const newMessage: Message = {
+              role: 'assistant',
+              content: enhancedContent,
+              timestamp: new Date(),
+              phase: finalPhase
+            };
 
-          setMessages(prevMessages => {
-            const updatedMessages = [...prevMessages, newMessage];
-            updateInterviewMessages(updatedMessages);
-            return updatedMessages;
-          });
-          findAndSetSuggestedAnswer(remainingContent);
+            setMessages(prevMessages => {
+              const updatedMessages = [...prevMessages, newMessage];
+              updateInterviewMessages(updatedMessages);
+              return updatedMessages;
+            });
+            
+            // FIXED: Set demo answer with correct phase and question count
+            const currentCount = calculateQuestionProgress([...(Array.isArray(messages) ? messages : messages.data), newMessage]);
+            findAndSetSuggestedAnswer(enhancedContent, finalPhase, currentCount);
+            
+          } else if (processedReportType === 'complete') {
+            // NEW: Enhanced final message
+            const finalMessage = `🎉 **Congratulations! Your Brand Alchemy Spark is Complete!**
+
+Thank you for this illuminating journey through your brand's authentic essence. We've uncovered powerful insights about your brand identity, messaging consistency, and audience alignment.
+
+📋 **Your Complete Brand Transformation Report is Ready!**
+
+This comprehensive analysis brings together all insights from our discussions and provides:
+- Strategic brand positioning recommendations
+- Actionable growth roadmap
+- Prioritized next steps
+- Professional brand analysis
+
+🔽 **Download Your Complete Report:** [Click here for your Brand Alchemy Spark](#download-complete)
+
+📊 **Access All Reports:** Expand the progress ribbon above to download individual phase reports
+
+Your brand has tremendous potential, and these insights provide the roadmap to unlock it. This analysis demonstrates the type of strategic transformation available through comprehensive brand development.
+
+Ready to take your brand to the next level? The insights you've discovered here are just the beginning of what's possible when you fully align your brand with your authentic vision.`;
+
+            const newMessage: Message = {
+              role: 'assistant',
+              content: finalMessage,
+              timestamp: new Date(),
+              phase: 'complete'
+            };
+
+            setMessages(prevMessages => {
+              const updatedMessages = [...prevMessages, newMessage];
+              updateInterviewMessages(updatedMessages);
+              return updatedMessages;
+            });
+            
+          } else {
+            // Regular message processing
+            const newMessage: Message = {
+              role: 'assistant',
+              content: remainingContent,
+              timestamp: new Date(),
+              phase: finalPhase
+            };
+
+            setMessages(prevMessages => {
+              const updatedMessages = [...prevMessages, newMessage];
+              updateInterviewMessages(updatedMessages);
+              return updatedMessages;
+            });
+            
+            // FIXED: Set demo answer with correct phase and question count
+            const currentCount = calculateQuestionProgress([...(Array.isArray(messages) ? messages : messages.data), newMessage]);
+            findAndSetSuggestedAnswer(remainingContent, finalPhase, currentCount);
+          }
         }
       }
     } catch (error) {
@@ -598,11 +750,12 @@ const Chat: React.FC = () => {
 
   const promptAssistantToFixReport = async (threadId: string, reportContent: string): Promise<string> => {
     try {
+      // FIXED: Updated required sections to match assistant instructions
       const requiredSections = [
         'Brand Breakthrough',
         'Your Brand at a Glance',
         'Key Observations and Insights',
-        'Personalized Growth Formula',
+        'Personalized Growth Roadmap', // FIXED: Was "Personalized Growth Formula"
         'Action Plan: Where to Focus Next',
         'Next Steps for Growth',
         'Prioritization Matrix',
@@ -680,22 +833,7 @@ Ensure all table cells are properly formatted. Each row should contain exactly o
         
         if (match && match[1]) {
           const fixedReport = match[1].trim();
-          const fixedTableLines = fixedReport.split('\n').filter(line => 
-            line.includes('| Recommendation') ||
-            line.includes('|------') ||
-            (line.startsWith('|') && line.includes('|'))
-          );
-          
-          const fixedHeaderSeparator = fixedTableLines.some(line => 
-            line.includes('|----') && line.includes('-------|')
-          );
-          
-          if (!fixedHeaderSeparator) {
-            console.warn('Fixed report still has table formatting issues');
-          } else {
-            console.log('Successfully fixed report format');
-          }
-          
+          console.log('Successfully fixed report format');
           return fixedReport;
         }
       }
@@ -752,9 +890,25 @@ Ensure all table cells are properly formatted. Each row should contain exactly o
       
     } catch (error) {
       console.error('Error sending message:', error);
-      toast.error('Failed to send message. Please try again.');
       
-      // Attempt recovery by removing the failed user message
+      if (error instanceof ChatError) {
+        switch (error.type) {
+          case 'network':
+            toast.error('Network error. Please check your connection and try again.');
+            break;
+          case 'timeout':
+            toast.error('Request timed out. Please try again.');
+            break;
+          case 'api':
+            toast.error('Service temporarily unavailable. Please try again.');
+            break;
+          default:
+            toast.error('Failed to send message. Please try again.');
+        }
+      } else {
+        toast.error('An unexpected error occurred. Please try again.');
+      }
+      
       setMessages(prev => prev.slice(0, -1));
     } finally {
       setIsLoading(false);
@@ -784,6 +938,49 @@ Ensure all table cells are properly formatted. Each row should contain exactly o
     return phases[currentIndex + 1] as 'messaging' | 'audience' | 'complete' | null;
   };
 
+  // NEW: Enhanced message bubble with download link handling
+  const renderEnhancedMessageBubble = (message: Message, index: number) => {
+    // Check if message contains download links
+    const hasDownloadLinks = message.content.includes('#download-');
+    
+    if (hasDownloadLinks) {
+      const processedContent = message.content.replace(
+        /\[Click here to download your (.*?) report\]\(#download-(.*?)\)/g,
+        (match, reportName, reportType) => {
+          return `<button onclick="window.downloadReport('${reportType}')" class="inline-flex items-center gap-2 px-4 py-2 bg-desert-sand hover:bg-champagne text-dark-gray font-medium rounded-lg transition-all duration-200 shadow-sm hover:shadow-md">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-4-4m4 4l4-4m6 2v6a2 2 0 01-2 2H6a2 2 0 01-2-2v-6"/>
+            </svg>
+            Download ${reportName} Report
+          </button>`;
+        }
+      );
+      
+      // Add download function to window for onclick handlers
+      (window as any).downloadReport = downloadReport;
+      
+      return (
+        <MessageBubble
+          key={index}
+          message={{...message, content: processedContent}}
+          isLast={index === messages.length - 1}
+          brandName={sessionStorage.getItem('brandName') || ''}
+          reportContent={reports.complete || null}
+        />
+      );
+    }
+    
+    return (
+      <MessageBubble
+        key={index}
+        message={message}
+        isLast={index === messages.length - 1}
+        brandName={sessionStorage.getItem('brandName') || ''}
+        reportContent={reports.complete || null}
+      />
+    );
+  };
+
   useEffect(() => {
     if (!interviewId) {
       toast.error('Session expired. Please restart your brand development journey.');
@@ -805,27 +1002,26 @@ Ensure all table cells are properly formatted. Each row should contain exactly o
         brandName={sessionStorage.getItem('brandName') || ''}
       />
       
-      <main className="flex-grow relative overflow-hidden bg-white-smoke mt-24">
+      <main className="flex-grow relative overflow-hidden bg-white-smoke mt-20">
         <div 
           ref={messageListRef}
           className="absolute inset-0 overflow-y-auto px-6 pt-4 space-y-4"
           style={{ 
             paddingBottom: `${inputBoxRef.current?.offsetHeight || 80}px`,
-            paddingTop: '8rem'
+            paddingTop: '2rem'
           }}
         >
-          {messages.map((message, index) => (
-            <MessageBubble
-              key={index}
-              message={message}
-              isLast={index === messages.length - 1}
-              brandName={sessionStorage.getItem('brandName') || ''}
-              reportContent={reports.complete || null}
-            />
-          ))}
-          {isTyping && (
+          {messages.map((message, index) => renderEnhancedMessageBubble(message, index))}
+          
+          {/* NEW: Enhanced typing indicator with report generation status */}
+          {(isTyping || isGeneratingReport) && (
             <div className="flex items-center text-neutral-gray italic">
-              <span className="mr-2">{processingMessages[processingStage]}</span>
+              <span className="mr-2">
+                {isGeneratingReport 
+                  ? "Generating your personalized brand report..." 
+                  : processingMessages[processingStage]
+                }
+              </span>
               <span className="animate-pulse">●●●</span>
             </div>
           )}

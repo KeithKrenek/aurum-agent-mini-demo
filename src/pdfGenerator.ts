@@ -25,7 +25,7 @@ const linkConfigs = [
   }
 ];
 
-// Enhanced markdown table normalization
+// Enhanced markdown table normalization with better error handling
 function normalizeMarkdownTables(markdown: string): string {
   const tablePattern = /(\|.*\|)\n(\|[-:|]+\|)/g;
   
@@ -53,7 +53,7 @@ const getTitlePage = (phaseName: string): string => {
   }
 };
 
-// Enhanced text processing with proper bold formatting
+// Enhanced text processing with FIXED heading overflow and better wrapping
 const processTextLine = (
   pdf: jsPDF,
   line: string,
@@ -66,32 +66,29 @@ const processTextLine = (
   const heading3Regex = /^### (.*)/;
   const heading4Regex = /^#### (.*)/;
   const boldTextRegex = /\*\*(.*?)\*\*/g;
+  const bulletRegex = /^[\s]*[-*]\s+(.*)/;
+  const numberedRegex = /^[\s]*(\d+)\.\s+(.*)/;
   const margin = 45;
   const pageHeight = pdf.internal.pageSize.getHeight();
-  const footerHeight = 80; // Increased footer space
+  const footerHeight = 80;
   const effectivePageHeight = pageHeight - footerHeight;
 
-  // Enhanced page break logic
+  // Enhanced page break logic with orphan/widow prevention
   const checkForPageBreak = (requiredHeight: number, lineHeight: number = 20): number => {
     const remainingSpace = effectivePageHeight - y;
     
     if (remainingSpace < requiredHeight) {
-      // Improved logic for preventing orphans and widows
-      if (remainingSpace < lineHeight * 2) {
-        // Not enough space for at least 2 lines
+      if (remainingSpace < lineHeight * 2.5) {
         pdf.addPage();
         return margin;
       } else if (requiredHeight <= lineHeight && remainingSpace >= requiredHeight) {
-        // Single line that fits, but check if it creates an orphan
         const linesOnCurrentPage = Math.floor((y - margin) / lineHeight);
         if (linesOnCurrentPage < 2) {
-          // Would create orphan, move to next page
           pdf.addPage();
           return margin;
         }
         return y;
       } else {
-        // Multi-line content that doesn't fit
         pdf.addPage();
         return margin;
       }
@@ -100,55 +97,133 @@ const processTextLine = (
     return y;
   };
 
-  // Process headings with proper spacing
+  // FIXED: Enhanced heading processing with proper text wrapping
   if (heading1Regex.test(line)) {
-    const requiredHeight = 50;
-    y = checkForPageBreak(requiredHeight, 25);
-    
-    pdf.setFont('CaslonGrad-Regular', 'normal');
-    pdf.setFontSize(24);
     const text = (line.match(heading1Regex)?.[1] || '').replace(/\*\*(.*?)\*\*/g, '$1');
-    pdf.text(text, x, y);
-    return { y: y + 40, newPage: false };
+    
+    // Check if heading fits on one line
+    pdf.setFont('CaslonGrad-Regular', 'normal');
+    pdf.setFontSize(28);
+    
+    const textWidth = pdf.getTextWidth(text);
+    if (textWidth > usableWidth) {
+      // FIXED: Wrap long headings properly
+      const wrappedLines = pdf.splitTextToSize(text, usableWidth);
+      const totalHeight = wrappedLines.length * 35 + 10; // Line height + spacing
+      
+      y = checkForPageBreak(totalHeight, 35);
+      
+      pdf.setTextColor(0, 0, 0);
+      wrappedLines.forEach((wrappedLine: string, index: number) => {
+        pdf.text(wrappedLine, x, y + (index * 35));
+      });
+      
+      return { y: y + (wrappedLines.length * 35) + 10, newPage: false };
+    } else {
+      // Original single-line logic
+      const requiredHeight = 60;
+      y = checkForPageBreak(requiredHeight, 30);
+      
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(text, x, y);
+      return { y: y + 45, newPage: false };
+    }
   }
 
+  // FIXED: Enhanced heading 2 with wrapping
   if (heading2Regex.test(line)) {
-    const requiredHeight = 40;
-    y = checkForPageBreak(requiredHeight, 20);
-    
-    pdf.setFont('CaslonGrad-Regular', 'normal');
-    pdf.setFontSize(18);
     const text = (line.match(heading2Regex)?.[1] || '').replace(/\*\*(.*?)\*\*/g, '$1');
-    pdf.text(text, x, y);
-    return { y: y + 30, newPage: false };
-  }
-
-  if (heading3Regex.test(line)) {
-    const requiredHeight = 35;
-    y = checkForPageBreak(requiredHeight, 18);
     
     pdf.setFont('CaslonGrad-Regular', 'normal');
-    pdf.setFontSize(14);
-    const text = (line.match(heading3Regex)?.[1] || '').replace(/\*\*(.*?)\*\*/g, '$1');
-    pdf.text(text, x, y);
-    return { y: y + 25, newPage: false };
+    pdf.setFontSize(20);
+    
+    const textWidth = pdf.getTextWidth(text);
+    if (textWidth > usableWidth) {
+      const wrappedLines = pdf.splitTextToSize(text, usableWidth);
+      const totalHeight = wrappedLines.length * 28 + 8;
+      
+      y = checkForPageBreak(totalHeight, 28);
+      
+      pdf.setTextColor(0, 0, 0);
+      wrappedLines.forEach((wrappedLine: string, index: number) => {
+        pdf.text(wrappedLine, x, y + (index * 28));
+      });
+      
+      return { y: y + (wrappedLines.length * 28) + 8, newPage: false };
+    } else {
+      const requiredHeight = 45;
+      y = checkForPageBreak(requiredHeight, 25);
+      
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(text, x, y);
+      return { y: y + 35, newPage: false };
+    }
   }
 
+  // FIXED: Enhanced heading 3 with wrapping
+  if (heading3Regex.test(line)) {
+    const text = (line.match(heading3Regex)?.[1] || '').replace(/\*\*(.*?)\*\*/g, '$1');
+    
+    pdf.setFont('CaslonGrad-Regular', 'normal');
+    pdf.setFontSize(16);
+    
+    const textWidth = pdf.getTextWidth(text);
+    if (textWidth > usableWidth) {
+      const wrappedLines = pdf.splitTextToSize(text, usableWidth);
+      const totalHeight = wrappedLines.length * 24 + 6;
+      
+      y = checkForPageBreak(totalHeight, 24);
+      
+      pdf.setTextColor(0, 0, 0);
+      wrappedLines.forEach((wrappedLine: string, index: number) => {
+        pdf.text(wrappedLine, x, y + (index * 24));
+      });
+      
+      return { y: y + (wrappedLines.length * 24) + 6, newPage: false };
+    } else {
+      const requiredHeight = 40;
+      y = checkForPageBreak(requiredHeight, 22);
+      
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(text, x, y);
+      return { y: y + 28, newPage: false };
+    }
+  }
+
+  // FIXED: Enhanced heading 4 with wrapping
   if (heading4Regex.test(line)) {
-    const requiredHeight = 30;
-    y = checkForPageBreak(requiredHeight, 16);
+    const text = (line.match(heading4Regex)?.[1] || '').replace(/\*\*(.*?)\*\*/g, '$1');
     
     pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(12);
-    const text = (line.match(heading4Regex)?.[1] || '').replace(/\*\*(.*?)\*\*/g, '$1');
-    pdf.text(text, x, y);
-    return { y: y + 22, newPage: false };
+    pdf.setFontSize(14);
+    
+    const textWidth = pdf.getTextWidth(text);
+    if (textWidth > usableWidth) {
+      const wrappedLines = pdf.splitTextToSize(text, usableWidth);
+      const totalHeight = wrappedLines.length * 20 + 5;
+      
+      y = checkForPageBreak(totalHeight, 20);
+      
+      pdf.setTextColor(0, 0, 0);
+      wrappedLines.forEach((wrappedLine: string, index: number) => {
+        pdf.text(wrappedLine, x, y + (index * 20));
+      });
+      
+      return { y: y + (wrappedLines.length * 20) + 5, newPage: false };
+    } else {
+      const requiredHeight = 35;
+      y = checkForPageBreak(requiredHeight, 20);
+      
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(text, x, y);
+      return { y: y + 25, newPage: false };
+    }
   }
 
-  // Enhanced table processing
+  // Enhanced table processing with better formatting
   const tableRegex = /^\|(.*)\|$/;
   if (tableRegex.test(line)) {
-    const cellPadding = 5;
+    const cellPadding = 8;
     const tableWidth = usableWidth;
     
     const cells = line.split('|').filter(cell => cell.trim() !== '');
@@ -161,7 +236,7 @@ const processTextLine = (
     const isHeaderRow = cells.some(cell => {
       const trimmedCell = cell.trim();
       const matchesKeywords = /\b(recommendation|impact|effort|priority|action|description|timeline)\b/i.test(trimmedCell);
-      return matchesKeywords && trimmedCell.length < 20;
+      return matchesKeywords && trimmedCell.length < 25;
     });
     
     if (!isSeparatorRow) {
@@ -169,10 +244,10 @@ const processTextLine = (
       const colCount = cells.length;
       
       if (colCount === 4) {
-        colWidths[0] = tableWidth * 0.5;
-        colWidths[1] = tableWidth * 0.15;
-        colWidths[2] = tableWidth * 0.15;
-        colWidths[3] = tableWidth * 0.2;
+        colWidths[0] = tableWidth * 0.45;
+        colWidths[1] = tableWidth * 0.18;
+        colWidths[2] = tableWidth * 0.18;
+        colWidths[3] = tableWidth * 0.19;
       } else if (colCount === 3) {
         colWidths[0] = tableWidth * 0.5;
         colWidths[1] = tableWidth * 0.25;
@@ -183,10 +258,10 @@ const processTextLine = (
         }
       }
       
-      const baseRowHeight = 28;
+      const baseRowHeight = 32;
       const firstCellText = cells[0] ? cells[0].replace(/\*\*(.*?)\*\*/g, '$1').trim() : '';
-      const estimatedLines = Math.max(1, Math.ceil(pdf.getTextWidth(firstCellText) / (colWidths[0] - cellPadding * 2) * 10));
-      const rowHeight = Math.max(baseRowHeight, estimatedLines * 12);
+      const estimatedLines = Math.max(1, Math.ceil(firstCellText.length / 40));
+      const rowHeight = Math.max(baseRowHeight, estimatedLines * 14);
       
       y = checkForPageBreak(rowHeight, baseRowHeight);
       
@@ -196,67 +271,100 @@ const processTextLine = (
         const colWidth = colWidths[i] || (tableWidth / colCount);
         
         if (isHeaderRow) {
-          pdf.setFillColor(240, 240, 240);
-          pdf.rect(xPosition, y - 15, colWidth, rowHeight, 'F');
+          pdf.setFillColor(245, 245, 245);
+          pdf.rect(xPosition, y - 18, colWidth, rowHeight, 'F');
         }
         
-        pdf.setDrawColor(180, 180, 180);
-        pdf.rect(xPosition, y - 15, colWidth, rowHeight, 'S');
+        pdf.setDrawColor(200, 200, 200);
+        pdf.setLineWidth(0.5);
+        pdf.rect(xPosition, y - 18, colWidth, rowHeight, 'S');
         
-        // Enhanced text rendering with bold support
         let textToRender = cellContent.trim().replace(/\*\*(.*?)\*\*/g, '$1');
         
         if (isHeaderRow) {
           pdf.setFont('helvetica', 'bold');
-          pdf.setFontSize(11);
+          pdf.setFontSize(12);
+          pdf.setTextColor(50, 50, 50);
         } else {
           pdf.setFont('helvetica', 'normal');
-          pdf.setFontSize(10);
+          pdf.setFontSize(11);
+          pdf.setTextColor(80, 80, 80);
         }
         
         if (i === 0 && !isHeaderRow) {
           const maxWidth = colWidth - (cellPadding * 2);
           const wrappedText = pdf.splitTextToSize(textToRender, maxWidth);
-          const totalTextHeight = wrappedText.length * 11;
-          const yOffset = Math.max(0, (rowHeight - totalTextHeight) / 2) + 3;
+          const totalTextHeight = wrappedText.length * 12;
+          const yOffset = Math.max(0, (rowHeight - totalTextHeight) / 2) + 5;
           
           wrappedText.forEach((textLine: string, lineIndex: number) => {
-            pdf.text(textLine, xPosition + cellPadding, y - 15 + yOffset + cellPadding + (lineIndex * 11));
+            pdf.text(textLine, xPosition + cellPadding, y - 18 + yOffset + cellPadding + (lineIndex * 12));
           });
         } else {
           const textWidth = pdf.getTextWidth(textToRender);
           const xPos = xPosition + (colWidth - textWidth) / 2;
-          const yPos = y - 15 + (rowHeight / 2) + 3;
+          const yPos = y - 18 + (rowHeight / 2) + 4;
           pdf.text(textToRender, xPos, yPos);
         }
         
         xPosition += colWidth;
       });
       
-      y += rowHeight;
+      y += rowHeight + 2;
     }
     
     return { y, newPage: false };
   }
 
-  // Enhanced bullet point processing
-  const bulletRegex = /^[\s]*[-*]\s+(.*)/;
+  // Enhanced numbered list processing with proper indentation
+  const numberedMatch = line.match(numberedRegex);
+  if (numberedMatch) {
+    const number = numberedMatch[1];
+    const content = numberedMatch[2];
+    const indent = (line.length - line.trimStart().length) * 3;
+    const numberIndent = 15 + indent;
+    const textIndent = 35 + indent;
+    const lineHeight = 18;
+    
+    y = checkForPageBreak(lineHeight * 2);
+    
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(12);
+    pdf.setTextColor(60, 60, 60);
+    
+    pdf.text(`${number}.`, x + numberIndent, y);
+    
+    const wrappedLines = pdf.splitTextToSize(content, usableWidth - textIndent - 10);
+    for (let i = 0; i < wrappedLines.length; i++) {
+      const wrappedLine = wrappedLines[i];
+      if (i > 0) {
+        y += lineHeight;
+        y = checkForPageBreak(lineHeight);
+      }
+      addFormattedTextWithBold(pdf, wrappedLine, x + textIndent, y);
+    }
+    
+    return { y: y + lineHeight + 6, newPage: false };
+  }
+
+  // Enhanced bullet point processing with consistent indentation
   if (bulletRegex.test(line)) {
     const match = line.match(bulletRegex);
     if (match) {
       const content = match[1];
-      const indent = (line.length - line.trimStart().length) * 2;
+      const indent = (line.length - line.trimStart().length) * 3;
       const bulletIndent = 15 + indent;
-      const textIndent = 25 + indent;
+      const textIndent = 28 + indent;
       const lineHeight = 18;
       
-      y = checkForPageBreak(lineHeight);
+      y = checkForPageBreak(lineHeight * 2);
       
       pdf.setFont('helvetica', 'normal');
       pdf.setFontSize(12);
+      pdf.setTextColor(60, 60, 60);
       pdf.text('•', x + bulletIndent, y);
       
-      const wrappedLines = pdf.splitTextToSize(content, usableWidth - textIndent);
+      const wrappedLines = pdf.splitTextToSize(content, usableWidth - textIndent - 10);
       for (let i = 0; i < wrappedLines.length; i++) {
         const wrappedLine = wrappedLines[i];
         if (i > 0) {
@@ -266,14 +374,15 @@ const processTextLine = (
         addFormattedTextWithBold(pdf, wrappedLine, x + textIndent, y);
       }
       
-      return { y: y + lineHeight + 5, newPage: false };
+      return { y: y + lineHeight + 6, newPage: false };
     }
   }
 
-  // Regular text with enhanced bold formatting
+  // Enhanced regular text processing with better typography
   pdf.setFont('helvetica', 'normal');
   pdf.setFontSize(12);
-  const lineHeight = 20;
+  pdf.setTextColor(70, 70, 70);
+  const lineHeight = 22;
 
   const wrappedLines = pdf.splitTextToSize(line, usableWidth);
   let newPage = false;
@@ -291,10 +400,10 @@ const processTextLine = (
     newPage = y > effectivePageHeight;
   }
 
-  return { y: y + 5, newPage };
+  return { y: y + 4, newPage };
 };
 
-// Enhanced text formatting with proper bold support
+// Enhanced text formatting with improved bold support and spacing
 const addFormattedTextWithBold = (pdf: jsPDF, text: string, x: number, y: number) => {
   const boldTextRegex = /\*\*(.*?)\*\*/g;
   let currentX = x;
@@ -304,7 +413,6 @@ const addFormattedTextWithBold = (pdf: jsPDF, text: string, x: number, y: number
   boldTextRegex.lastIndex = 0;
 
   while ((match = boldTextRegex.exec(text)) !== null) {
-    // Text before bold section
     const beforeBold = text.substring(lastIndex, match.index);
     if (beforeBold) {
       pdf.setFont('helvetica', 'normal');
@@ -312,7 +420,6 @@ const addFormattedTextWithBold = (pdf: jsPDF, text: string, x: number, y: number
       currentX += pdf.getTextWidth(beforeBold);
     }
     
-    // Bold text
     const boldText = match[1];
     pdf.setFont('helvetica', 'bold');
     pdf.text(boldText, currentX, y);
@@ -321,21 +428,19 @@ const addFormattedTextWithBold = (pdf: jsPDF, text: string, x: number, y: number
     lastIndex = match.index + match[0].length;
   }
   
-  // Remaining text after last bold section
   const remaining = text.substring(lastIndex);
   if (remaining) {
     pdf.setFont('helvetica', 'normal');
     pdf.text(remaining, currentX, y);
   }
   
-  // If no bold text was found, render normally
   if (lastIndex === 0) {
     pdf.setFont('helvetica', 'normal');
     pdf.text(text, x, y);
   }
 };
 
-// Enhanced hyperlink support
+// Enhanced hyperlink support with better styling
 const addHyperlinkToText = (
   pdf: jsPDF,
   text: string, 
@@ -373,7 +478,7 @@ const addHyperlinkToText = (
 
     const beforeText = remainingText.substring(0, phraseIndex);
     if (beforeText) {
-      pdf.setTextColor(0, 0, 0);
+      pdf.setTextColor(70, 70, 70);
       addFormattedTextWithBold(pdf, beforeText, currentX, y);
       currentX += pdf.getTextWidth(beforeText.replace(/\*\*(.*?)\*\*/g, '$1'));
     }
@@ -383,7 +488,11 @@ const addHyperlinkToText = (
     pdf.text(phrase, currentX, y);
     
     const linkWidth = pdf.getTextWidth(phrase);
-    pdf.link(currentX, y - 10, linkWidth, 12, { url });
+    pdf.link(currentX, y - 12, linkWidth, 14, { url });
+    
+    pdf.setDrawColor(0, 102, 204);
+    pdf.setLineWidth(0.3);
+    pdf.line(currentX, y + 1, currentX + linkWidth, y + 1);
     
     currentX += linkWidth;
     processedLength += beforeText.length + phrase.length;
@@ -391,39 +500,41 @@ const addHyperlinkToText = (
   }
   
   if (remainingText) {
-    pdf.setTextColor(0, 0, 0);
+    pdf.setTextColor(70, 70, 70);
     addFormattedTextWithBold(pdf, remainingText, currentX, y);
   }
 };
 
-// Enhanced brand name rendering with proper wrapping
+// Enhanced brand name rendering with better typography and positioning
 const renderBrandNameOnTitlePage = (pdf: jsPDF, brandName: string, pageWidth: number, pageHeight: number) => {
   pdf.setFont('IbarraRealNova-Bold', 'bold');
-  pdf.setFontSize(32);
+  pdf.setFontSize(36);
   pdf.setTextColor(255, 255, 255);
 
-  const maxWidth = pageWidth * 0.8; // Use 80% of page width for safety margin
+  const maxWidth = pageWidth * 0.75;
   const brandNameLines = pdf.splitTextToSize(brandName.toUpperCase(), maxWidth);
   
-  // Calculate starting Y position to center the text block
-  const lineHeight = 35;
+  const lineHeight = 40;
   const totalHeight = brandNameLines.length * lineHeight;
-  let startY = pageHeight * 0.85 - (totalHeight / 2);
+  let startY = pageHeight * 0.84 - (totalHeight / 2);
   
-  // Ensure we don't go below the page
-  if (startY + totalHeight > pageHeight * 0.95) {
-    startY = pageHeight * 0.95 - totalHeight;
+  if (startY + totalHeight > pageHeight * 0.94) {
+    startY = pageHeight * 0.94 - totalHeight;
   }
   
-  // Ensure we don't go above reasonable position
-  if (startY < pageHeight * 0.7) {
-    startY = pageHeight * 0.7;
+  if (startY < pageHeight * 0.68) {
+    startY = pageHeight * 0.68;
   }
 
   brandNameLines.forEach((line: string, index: number) => {
     const lineWidth = pdf.getTextWidth(line);
     const xPosition = (pageWidth - lineWidth) / 2;
     const yPosition = startY + (index * lineHeight);
+    
+    pdf.setTextColor(0, 0, 0, 0.3);
+    pdf.text(line, xPosition + 1, yPosition + 1);
+    
+    pdf.setTextColor(255, 255, 255);
     pdf.text(line, xPosition, yPosition);
   });
 };
@@ -435,9 +546,8 @@ export const generatePDF = async ({ brandName, reportParts, phaseName }: PdfOpti
     format: 'a4'
   });
 
-  console.log('Generating PDF report for:', phaseName);
+  console.log('Generating enhanced PDF report for:', phaseName);
 
-  // Add custom fonts
   pdf.addFileToVFS('CaslonGrad-Regular.ttf', CaslonGradReg);
   pdf.addFileToVFS('IbarraRealNova-Bold.ttf', IbarraRealNovaBold);
   pdf.addFont('CaslonGrad-Regular.ttf', 'CaslonGrad-Regular', 'normal');
@@ -451,32 +561,27 @@ export const generatePDF = async ({ brandName, reportParts, phaseName }: PdfOpti
   const isFinalReport = phaseName.toLowerCase().includes('complete') || 
                        phaseName.toLowerCase().includes('brand spark');
 
-  // Add title page with enhanced brand name rendering
   const titlePageImage = getTitlePage(phaseName);
   pdf.addImage(titlePageImage, 'PNG', 0, 0, pageWidth, pageHeight);
   
-  // Enhanced brand name rendering that properly wraps
   renderBrandNameOnTitlePage(pdf, brandName, pageWidth, pageHeight);
 
-  // Add second page only for final report
   if (isFinalReport) {
     pdf.addPage();
     pdf.addImage(secondpage, 'PNG', 0, 0, pageWidth, pageHeight);
   }
 
-  // Start content on a new page
   pdf.addPage();
   pdf.setTextColor(0, 0, 0);
 
-  // Process each report part with enhanced formatting
   reportParts.forEach((reportContent, index) => {
     const normalizedContent = normalizeMarkdownTables(reportContent);
     
-    let yPosition = margin;
+    let yPosition = margin + 20;
 
     if (index > 0) {
       pdf.addPage();
-      yPosition = margin;
+      yPosition = margin + 20;
     }
 
     const lines = normalizedContent.split('\n');
@@ -486,34 +591,51 @@ export const generatePDF = async ({ brandName, reportParts, phaseName }: PdfOpti
 
       if (newPage) {
         pdf.addPage();
-        yPosition = margin;
+        yPosition = margin + 20;
       }
     });
   });
 
-  // Add footer with page numbers and logo only for final report
   if (isFinalReport) {
     const pageCount = pdf.getNumberOfPages();
-    const logoHeight = 0.25 * margin;
-    const logoWidth = 2.34 * margin;
+    const logoHeight = 0.28 * margin;
+    const logoWidth = 2.5 * margin;
     
     for (let i = 3; i <= pageCount; i++) {
       pdf.setPage(i);
       pdf.setFontSize(10);
-      pdf.setFont('CaslonGrad-Regular', 'normal');
-      pdf.setTextColor(0, 0, 0);
-      pdf.text(`${i - 2} of ${pageCount - 2}`, margin, pageHeight - margin / 2, { align: 'left' });
-      pdf.addImage(smallLogo, 'PNG', pageWidth - logoWidth - margin, pageHeight - logoHeight - margin / 2, logoWidth, logoHeight);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(120, 120, 120);
+      
+      const pageNumber = `${i - 2} of ${pageCount - 2}`;
+      pdf.text(pageNumber, margin, pageHeight - margin / 2 + 5, { align: 'left' });
+      
+      pdf.addImage(smallLogo, 'PNG', 
+        pageWidth - logoWidth - margin, 
+        pageHeight - logoHeight - margin / 2, 
+        logoWidth, 
+        logoHeight
+      );
     }
   }
 
-  // Generate safer filename with shorter brand names
-  const sanitizedPhaseName = phaseName.toLowerCase().replace(/\s+/g, '-');
+  const sanitizedPhaseName = phaseName.toLowerCase()
+    .replace(/[^a-zA-Z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .substring(0, 50);
+    
   const sanitizedBrandName = brandName.toLowerCase()
-    .replace(/[^a-zA-Z0-9\s]/g, '') // Remove special characters
-    .replace(/\s+/g, '-') // Replace spaces with hyphens
-    .substring(0, 30); // Limit length to prevent extremely long filenames
+    .replace(/[^a-zA-Z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .substring(0, 30);
   
   const fileName = `${sanitizedBrandName}-${sanitizedPhaseName}.pdf`;
-  pdf.save(fileName);
+  
+  try {
+    pdf.save(fileName);
+    console.log('PDF generated successfully:', fileName);
+  } catch (error) {
+    console.error('Error saving PDF:', error);
+    throw new Error('Failed to generate PDF file');
+  }
 };
